@@ -4,7 +4,7 @@
   "private": true,
   "description": "Bittune inference engineering agent shell powered by an embedded agent runtime.",
   "license": "MIT",
-  "author": "BitCloud",
+  "author": "BitCloud <litianqi@bitcloud.com.cn>",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/bitcloud-ai/BitTune.git"
