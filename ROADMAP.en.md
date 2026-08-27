@@ -2,7 +2,7 @@
 
 简体中文 ｜ [English](ROADMAP.en.md)
 
-> This document describes Bittune's public direction for users and contributors. Stages are defined by the results a user can obtain, not by dates or feature counts; entries are deliberately kept at the theme level. Last updated: 2026-08-27.
+> This document describes Bittune's public direction for users and contributors. Stages are defined by the results a user can obtain, not by dates or feature counts; entries are kept at the theme level so they can be expanded or collapsed as needed. Last updated: 2026-08-27.
 
 Status legend:
 
@@ -24,10 +24,7 @@ user goal → agent understanding → few managed domain tools → deterministic
           → real deployment and real measurement → auditable experiment records → reusable performance knowledge
 ```
 
-Two invariant principles:
-
-- The LLM handles understanding, trade-offs, and explanation; every number must come from deterministic tools and real measurements — never gut feeling.
-- Get single-machine right first, then extend to multi-GPU and clusters through stable boundaries; extension means adding implementations, not rewriting the upper layers.
+Prioritize a correct and complete single-machine experience before extending to multi-GPU and clusters; optimization conclusions always come from real measurements, never estimates.
 
 ## ✅ Shipped
 
@@ -42,22 +39,20 @@ Per the latest [Release](https://github.com/bitcloud-ai/Bittune/releases), the c
 
 ## 🚧 In progress
 
-- Splitting hardware inspection, model discovery, deployment, and benchmarking out of a single implementation into a deterministic core layer with versioned boundaries, so the same pipeline can be tested and replaced independently.
+- Refactoring hardware inspection, model discovery, deployment, and benchmarking into independently updatable modules.
 - Hardening tuning-data retention policy: execution evidence always stays local; any export or sharing requires explicit authorization and data minimization.
 - Freezing acceptance evidence for the multi-engine closed loop (baselines, regression, rollback) in real GPU environments.
 
 ## 📋 Planned · next major cycle
 
-Together these goals answer one question: **make the interfaces others depend on stable, and win freedom of replacement for internal implementations.**
-
 1. **Public domain contracts**
    Environment facts, model profiles, workload profiles, deployment intents, benchmark results, and experiment records expressed as versioned public contracts; the Agent works against contracts, not against any engine's specific parameters.
 2. **Engine adapter interface**
-   New inference engines plug in by implementing adapters for lifecycle, observation, and benchmarking — no changes to the agent layer. This will be the first clear contribution path for the community.
+   New inference engines plug in by implementing adapters for lifecycle, observation, and benchmarking — no changes to the agent layer.
 3. **Experiment record v1**
    "Deploy A → benchmark → Deploy B → benchmark → compare" becomes a first-class operation: conclusions can be replayed, cited, and traced across sessions.
 4. **Local performance registry v0**
-   Answer locally: "same hardware, same model, same workload — what did we measure before?" Data schema comes before data scale.
+   Answer locally: "same hardware, same model, same workload — what did we measure before?"
 5. **Reports and human-readable output**
    Tuning reports structured into two layers — machine-verifiable plus directly human-readable — as the basic unit for external sharing.
 
@@ -94,12 +89,8 @@ Non-goals matter as much as the roadmap; none of the following will appear in an
 
 ## Long-term constraints across all stages
 
-The following principles apply everywhere; the public architecture write-up ships with the documentation set:
-
-- The Agent only proposes; all real operations go through managed tools that can be authorized, cancelled, recovered, and rolled back.
-- Permission, resource ownership, and evidence are three orthogonal concepts and must not be conflated with tool visibility.
-- Every significant conclusion distinguishes its source: declared / detected / measured / modeled / inferred.
-- Each stage validates user outcomes in real environments before expanding permissions or environment scope.
+- All real operations go through managed tools that can be authorized, cancelled, recovered, and rolled back.
+- Every significant conclusion states its source and evidence.
 
 ## How to participate and influence the roadmap
 
