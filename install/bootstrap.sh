@@ -119,14 +119,18 @@ resolve_node() {
   die "--check-only 需要一个 Node ${NODE_VERSION}：请先完成一次安装，或提供 --package/--offline 来源。"
 }
 
+# Sets STAGE_DIST_FILE and STAGE_DIST_STAGE as its return channel; never echoes,
+# because log output must be able to use stdout freely inside this function.
 stage_agent_dist() {
+  STAGE_DIST_FILE=""
+  STAGE_DIST_STAGE=""
+  local node_bin="${1}"
   if [[ ${MODE} == "offline" ]]; then
     [[ -f "${SOURCE}/agent/dist/bittune.js" ]] || die "离线包缺少 agent/dist/bittune.js。"
     if [[ -f "${SOURCE}/SHA256SUMS" ]]; then
       (cd "${SOURCE}" && sha256sum --check --status SHA256SUMS) || die "离线包完整性校验失败。"
     fi
-    echo "${SOURCE}/agent/dist/bittune.js"
-    echo ""
+    STAGE_DIST_FILE="${SOURCE}/agent/dist/bittune.js"
     return 0
   fi
   prepare_network_tools
@@ -136,15 +140,14 @@ stage_agent_dist() {
   if [[ ! -f "${stage}/dist/bittune.js" ]]; then rm -rf "${stage}"; die "发行包缺少 dist/bittune.js。"; fi
   # The release dist is not self-contained: production dependencies must exist
   # before any dist code runs, including a --check-only handoff.
-  local node_bin_dir npm_bin
-  node_bin_dir="$(dirname "${1}")"
-  npm_bin="${node_bin_dir}/npm"
+  local npm_bin
+  npm_bin="$(dirname "${node_bin}")/npm"
   log "为引导暂存目录安装生产依赖（npm install --omit=dev）…"
   if ! "${npm_bin}" install --omit=dev --ignore-scripts --prefix "${stage}" >/dev/null; then
     rm -rf "${stage}"; die "npm 安装引导暂存依赖失败；检查网络或代理后重试。"
   fi
-  echo "${stage}/dist/bittune.js"
-  echo "${stage}"
+  STAGE_DIST_FILE="${stage}/dist/bittune.js"
+  STAGE_DIST_STAGE="${stage}"
 }
 
 main() {
@@ -155,14 +158,13 @@ main() {
     die "无法识别来源类型：${SOURCE}；请显式使用 --package 或 --offline。"
   fi
 
-  local node_bin dist_file="" dist_stage=""
+  local node_bin
   node_bin="$(resolve_node)"
   if [[ -n ${SOURCE} ]]; then
-    local parts=()
-    mapfile -t parts < <(stage_agent_dist "${node_bin}")
-    dist_file="${parts[0]}"
-    dist_stage="${parts[1]:-}"
+    stage_agent_dist "${node_bin}"
   fi
+  local dist_file="${STAGE_DIST_FILE:-}"
+  local dist_stage="${STAGE_DIST_STAGE:-}"
   if [[ -z ${dist_file} ]]; then
     dist_file="${INSTALL_ROOT}/agent/dist/bittune.js"
     [[ -f ${dist_file} ]] || die "未找到已安装的 Bittune；check-only 需要 --package/--offline 来源或已完成的基础安装。"
