@@ -10,7 +10,7 @@ assignees: ''
 
 - **OS**: [e.g. Ubuntu 24.04]
 - **Node.js 版本**: [e.g. 22.19.0]
-- **BitTune 版本/Commit**: [e.g. v0.1.0, commit hash]
+- **Bittune 版本/Commit**: [e.g. v0.1.0, commit hash]
 
 ## 问题描述
 

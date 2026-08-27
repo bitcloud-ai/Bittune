@@ -2,7 +2,7 @@
 
 简体中文 ｜ [English](ROADMAP.en.md)
 
-> This document describes BitTune's public direction for users and contributors. Stages are defined by the results a user can obtain, not by dates or feature counts; entries are deliberately kept at the theme level. Last updated: 2026-08-27.
+> This document describes Bittune's public direction for users and contributors. Stages are defined by the results a user can obtain, not by dates or feature counts; entries are deliberately kept at the theme level. Last updated: 2026-08-27.
 
 Status legend:
 
