@@ -1,5 +1,9 @@
 # Bittune
 
+[简体中文](README.md) ｜ [English](README.en.md)
+
+![Release](https://img.shields.io/github/v/release/bitcloud-ai/BitTune) [![CI](https://github.com/bitcloud-ai/BitTune/actions/workflows/ci.yml/badge.svg)](https://github.com/bitcloud-ai/BitTune/actions/workflows/ci.yml) ![License](https://img.shields.io/badge/license-MIT-blue.svg)
+
 > 面向 GPU 推理部署、压测和调优的工程智能体。
 
 Bittune 将环境检查、模型发现、服务部署、可用性探测、性能测试和证据记录组织为可审计的工程工具。Agent 根据目标、当前观测和已有运行记录选择下一步，而不是执行固定流水线。
