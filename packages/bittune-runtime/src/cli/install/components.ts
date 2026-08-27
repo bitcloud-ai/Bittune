@@ -59,7 +59,16 @@ export interface InstallContext {
   payloadPath: string;
   /** Bootstrap-prepared agent staging directory (deps already installed); adopted when valid. */
   stageAgentDir?: string;
+  /** Absolute path to the pinned Python requirements list shipped beside the entrypoint. */
+  requirementsPath?: string;
   appendLog: LogSink;
+}
+
+const INSTALL_MARKER = ".bittune-install.json";
+
+interface InstallMarker {
+  version: string;
+  dist_sha256: string;
 }
 
 export interface ComponentDescription {
@@ -132,6 +141,21 @@ async function extractReleasePackage(ctx: InstallContext, stage: string): Promis
   if (!existsSync(join(stage, "package.json")) || !existsSync(join(stage, "dist", "bittune.js"))) {
     throw new Error("发行包缺少 package.json 或 dist/bittune.js。");
   }
+}
+
+async function readInstallMarker(root: string): Promise<InstallMarker | undefined> {
+  try {
+    const parsed = JSON.parse(await import("node:fs/promises").then((fs) => fs.readFile(join(root, INSTALL_MARKER), "utf8"))) as InstallMarker;
+    return typeof parsed === "object" && parsed !== null && typeof parsed.version === "string" && typeof parsed.dist_sha256 === "string" ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeInstallMarker(ctx: InstallContext): Promise<void> {
+  const distSha = await fileSha256(join(agentRoot(ctx), "dist", "bittune.js"));
+  const marker: InstallMarker = { version: VERSION, dist_sha256: distSha };
+  await writeFile(join(agentRoot(ctx), INSTALL_MARKER), `${JSON.stringify(marker)}\n`, { mode: 0o644 });
 }
 
 export const COMPONENTS: readonly ComponentDefinition[] = [
@@ -234,9 +258,16 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     },
     async detect(ctx) {
       const root = agentRoot(ctx);
-      return existsSync(join(root, "dist", "bittune.js")) && existsSync(join(root, "package.json")) && existsSync(join(root, "node_modules"))
-        ? "satisfied"
-        : "pending";
+      if (!existsSync(join(root, "dist", "bittune.js")) || !existsSync(join(root, "package.json")) || !existsSync(join(root, "node_modules"))) {
+        return "pending";
+      }
+      // Upgrades are content-addressed: same VERSION with a different build
+      // (or a legacy install without a marker) re-installs and refreshes the
+      // recorded provenance plus the launcher script.
+      const marker = await readInstallMarker(root);
+      if (!marker) return "pending";
+      const distHash = await fileSha256(join(root, "dist", "bittune.js"));
+      return marker.version === VERSION && marker.dist_sha256 === distHash ? "satisfied" : "pending";
     },
     async install(ctx) {
       // Bootstrap hands over a prepared staging directory for online installs;
@@ -248,6 +279,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
         const launcherPath = "/usr/local/bin/bittune";
         await mkdir(dirname(launcherPath), { recursive: true }).catch(() => undefined);
         await writeFile(launcherPath, launcherScript(ctx), { mode: 0o755 });
+        await writeInstallMarker(ctx);
         return `Bittune ${VERSION} 已就绪（采用引导暂存目录），入口 ${launcherPath}。`;
       }
       const stage = join(ctx.installRoot, `.agent-install-${uniqueStamp()}`);
@@ -272,6 +304,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
         const launcherPath = "/usr/local/bin/bittune";
         await mkdir(dirname(launcherPath), { recursive: true }).catch(() => undefined);
         await writeFile(launcherPath, launcherScript(ctx), { mode: 0o755 });
+        await writeInstallMarker(ctx);
         return `Bittune ${VERSION} 已就绪，入口 ${launcherPath}。`;
       } catch (error) {
         await rm(stage, { recursive: true, force: true });
@@ -317,8 +350,11 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
           throw new ComponentSkipped("创建 Python 虚拟环境失败（通常缺少 python3-venv）：sudo apt-get install -y python3-venv 后重跑安装器。");
         }
       }
-      const requirements = join(agentRoot(ctx), "requirements.txt");
-      if (!existsSync(requirements)) throw new ComponentSkipped("发行包缺少 requirements.txt；请按指南手动准备 evalscope/hf。");
+      const requirementCandidates = [ctx.requirementsPath, join(agentRoot(ctx), "requirements.txt")].filter((path): path is string => Boolean(path));
+      const requirements = requirementCandidates.find((path) => existsSync(path));
+      if (!requirements) {
+        throw new ComponentSkipped("未找到 requirements.txt；请按指南手动准备钉版 evalscope/hf（pip install -r requirements.txt）。");
+      }
       const pipBin = join(pyRoot(ctx), "bin", "pip");
       const installedTools = await sh(pipBin, ["install", "--quiet", "-r", requirements], ctx.appendLog, 1_800_000);
       if (installedTools.exit_code !== 0) {

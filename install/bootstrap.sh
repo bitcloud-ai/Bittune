@@ -177,6 +177,14 @@ main() {
   if [[ ${MODE} == "offline" ]]; then append_forward --offline "${SOURCE}"; fi
   if [[ -n ${dist_stage} ]]; then append_forward --stage-dir "${dist_stage}"; fi
 
+  local reqs=""
+  local script_dir
+  script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+  for cand in "${script_dir}/requirements.txt" "${SOURCE}/requirements.txt" "${SOURCE}/../requirements.txt"; do
+    if [[ -f ${cand} ]]; then reqs="${cand}"; break; fi
+  done
+  if [[ -n ${reqs} ]]; then append_forward --requirements "${reqs}"; fi
+
   local rc=0
   "${node_bin}" "${dist_file}" install ${FORWARD[@]+"${FORWARD[@]}"} || rc=$?
   if [[ -n ${dist_stage} ]]; then rm -rf "${dist_stage}"; fi

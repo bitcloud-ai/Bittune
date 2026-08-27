@@ -17,6 +17,8 @@ export interface InstallOptions {
   bundleDir?: string;
   /** Bootstrap-prepared agent staging directory, adopted by the agent component. */
   stageDir?: string;
+  /** Pinned Python requirements list shipped beside the bootstrap entrypoint. */
+  requirementsPath?: string;
 }
 
 type ExecutedStatus = "satisfied" | "installed" | "skipped" | "failed";
@@ -212,6 +214,7 @@ export async function runInstallCommand(options: InstallOptions): Promise<number
       sourceKind: sourceKind ?? "network",
       payloadPath: payloadPath ?? "",
       ...(options.stageDir ? { stageAgentDir: options.stageDir } : {}),
+      ...(options.requirementsPath ? { requirementsPath: options.requirementsPath } : {}),
       appendLog,
     };
 

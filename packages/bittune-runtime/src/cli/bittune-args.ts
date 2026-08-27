@@ -20,6 +20,8 @@ export interface BittuneInstallOptions {
 	bundleDir?: string;
 	/** Bootstrap-prepared agent staging directory; adopted instead of a fresh extract. */
 	stageDir?: string;
+	/** Pinned Python requirements list shipped beside the bootstrap entrypoint. */
+	requirementsPath?: string;
 }
 
 export type BittuneCliInvocation =
@@ -144,6 +146,7 @@ function parseInstall(args: string[]): BittuneCliInvocation {
 			case "--package": options.packagePath = value(); break;
 			case "--offline": options.bundleDir = value(); break;
 			case "--stage-dir": options.stageDir = value(); break;
+			case "--requirements": options.requirementsPath = value(); break;
 			default: throw usageError(`Unknown option \"${arg}\" for bittune install.`);
 		}
 	}
