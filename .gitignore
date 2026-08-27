@@ -1,0 +1,27 @@
+node_modules/
+dist/
+release/
+coverage/
+.pi/agent/
+.pi/trust.json
+.env
+.env.*
+!.env.example
+artifacts/
+models/
+*.pem
+*.key
+secrets/
+.tmp-*/
+*.tgz
+
+# Never let local working artifacts enter repository history
+nul
+/bittune-test-report-v2.md
+architecture/*.visual-check.*
+
+# Internal-only content: never publish
+/vision/
+/architecture/
+docs/qa-report-*
+docs/deep-usage-test-*

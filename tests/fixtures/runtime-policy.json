@@ -1,0 +1,7 @@
+{
+  "allowedRuntimeRepositories": [
+    "registry.example/acme/vllm",
+    "registry.example/acme/sglang",
+    "registry.example:5000/acme/vllm"
+  ]
+}
