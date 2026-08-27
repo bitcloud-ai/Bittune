@@ -2,7 +2,7 @@
 
 [简体中文](README.md) ｜ [English](README.en.md)
 
-![Release](https://img.shields.io/github/v/release/bitcloud-ai/BitTune) [![CI](https://github.com/bitcloud-ai/BitTune/actions/workflows/ci.yml/badge.svg)](https://github.com/bitcloud-ai/BitTune/actions/workflows/ci.yml) ![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Release](https://img.shields.io/github/v/release/bitcloud-ai/Bittune) [![CI](https://github.com/bitcloud-ai/Bittune/actions/workflows/ci.yml/badge.svg)](https://github.com/bitcloud-ai/Bittune/actions/workflows/ci.yml) ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
 > 面向 GPU 推理部署、压测和调优的工程智能体。
 
@@ -23,7 +23,7 @@ Bittune 将环境检查、模型发现、服务部署、可用性探测、性能
 
 ## 快速开始
 
-从 [GitHub Releases](https://github.com/bitcloud-ai/BitTune/releases) 下载 `bittune-installer-<version>.tar.gz`，在 Ubuntu x86_64 主机安装：
+从 [GitHub Releases](https://github.com/bitcloud-ai/Bittune/releases) 下载 `bittune-installer-<version>.tar.gz`，在 Ubuntu x86_64 主机安装：
 
 ```bash
 tar -xzf bittune-installer-<version>.tar.gz

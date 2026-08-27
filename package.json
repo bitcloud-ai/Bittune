@@ -7,12 +7,12 @@
   "author": "BitCloud <litianqi@bitcloud.com.cn>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/bitcloud-ai/BitTune.git"
+    "url": "git+https://github.com/bitcloud-ai/Bittune.git"
   },
   "bugs": {
-    "url": "https://github.com/bitcloud-ai/BitTune/issues"
+    "url": "https://github.com/bitcloud-ai/Bittune/issues"
   },
-  "homepage": "https://github.com/bitcloud-ai/BitTune#readme",
+  "homepage": "https://github.com/bitcloud-ai/Bittune#readme",
   "type": "module",
   "bin": {
     "bittune": "dist/bittune.js"

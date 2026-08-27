@@ -31,7 +31,7 @@ Bittune 是本地优先的推理部署与优化智能体：它帮助已经拥有
 
 ## ✅ 已发布
 
-以最近一次 [Release](https://github.com/bitcloud-ai/BitTune/releases) 为准，当前基线包括：
+以最近一次 [Release](https://github.com/bitcloud-ai/Bittune/releases) 为准，当前基线包括：
 
 - Linux x86_64 单机安装器、离线安装路径与 `bittune doctor` 环境自检。
 - 多推理引擎（当前覆盖 vLLM 与 SGLang）的统一受管生命周期：受限配置创建、就绪检查、端点探测、日志读取与停止。

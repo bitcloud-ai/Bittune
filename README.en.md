@@ -1,4 +1,4 @@
-# BitTune
+# Bittune
 
 [简体中文](README.md) ｜ [English](README.en.md)
 
@@ -21,7 +21,7 @@ Bittune organizes environment inspection, model discovery, service deployment, a
 
 ## Quick start
 
-Download `bittune-installer-<version>.tar.gz` from [GitHub Releases](https://github.com/bitcloud-ai/BitTune/releases) and install on an Ubuntu x86_64 host:
+Download `bittune-installer-<version>.tar.gz` from [GitHub Releases](https://github.com/bitcloud-ai/Bittune/releases) and install on an Ubuntu x86_64 host:
 
 ```bash
 tar -xzf bittune-installer-<version>.tar.gz

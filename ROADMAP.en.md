@@ -1,4 +1,4 @@
-# BitTune Roadmap
+# Bittune Roadmap
 
 简体中文 ｜ [English](ROADMAP.en.md)
 
@@ -31,7 +31,7 @@ Two invariant principles:
 
 ## ✅ Shipped
 
-Per the latest [Release](https://github.com/bitcloud-ai/BitTune/releases), the current baseline includes:
+Per the latest [Release](https://github.com/bitcloud-ai/Bittune/releases), the current baseline includes:
 
 - A Linux x86_64 single-node installer with offline installation support and `bittune doctor` environment self-checks.
 - A unified managed lifecycle for multiple inference engines (currently vLLM and SGLang): restricted-configuration creation, readiness checks, endpoint probing, log reading, and stopping.
