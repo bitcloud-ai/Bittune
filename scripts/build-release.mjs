@@ -23,9 +23,7 @@ const stage = join(distribution, releaseName);
 await mkdir(stage, { recursive: true });
 const installerScripts = [
 	"bootstrap.sh",
-	"install-ubuntu.sh",
 	"build-offline-bundle-ubuntu.sh",
-	"offline-install-ubuntu.sh",
 ];
 await Promise.all(
 	installerScripts.map(async (name) => {

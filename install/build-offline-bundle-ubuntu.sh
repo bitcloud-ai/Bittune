@@ -27,7 +27,7 @@ tar -xJf "${NODE_ARCHIVE}" -C "${ROOT}"
 tar -xzf "${PACKAGE_PATH}" --strip-components=1 -C "${ROOT}/agent"
 [[ -r ${ROOT}/agent/dist/bittune.js ]] || { echo "Bittune 包缺少 dist/bittune.js。" >&2; exit 1; }
 PATH="${ROOT}/node-${NODE_VERSION}-linux-x64/bin:${PATH}" "${ROOT}/node-${NODE_VERSION}-linux-x64/bin/npm" install --omit=dev --ignore-scripts --prefix "${ROOT}/agent"
-cp "${SCRIPT_DIR}/offline-install-ubuntu.sh" "${ROOT}/offline-install-ubuntu.sh"
+cp "${SCRIPT_DIR}/bootstrap.sh" "${ROOT}/bootstrap.sh"
 cp "${SCRIPT_DIR}/offline-manifest.env" "${ROOT}/offline-manifest.env"
 
 cat > "${ROOT}/BUILD-METADATA" <<EOF

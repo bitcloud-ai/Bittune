@@ -25,8 +25,6 @@ const expectedPaths = [
 	"guide/operations.md",
 	"install/bootstrap.sh",
 	"install/build-offline-bundle-ubuntu.sh",
-	"install/install-ubuntu.sh",
-	"install/offline-install-ubuntu.sh",
 	"install/offline-manifest.env",
 	"install/requirements.txt",
 	"package.json",

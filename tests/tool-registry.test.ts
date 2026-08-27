@@ -722,11 +722,17 @@ test("versioned comparison enforces sample evidence and objective CV stability",
 });
 
 test("base distribution is runtime-free and does not mutate GPU providers", async () => {
-  const [build, installer, offlineInstaller, manifest] = await Promise.all([readFile("install/build-offline-bundle-ubuntu.sh", "utf8"), readFile("install/install-ubuntu.sh", "utf8"), readFile("install/offline-install-ubuntu.sh", "utf8"), readFile("install/offline-manifest.env", "utf8")]);
+  const [build, bootstrap, manifest, components] = await Promise.all([
+    readFile("install/build-offline-bundle-ubuntu.sh", "utf8"),
+    readFile("install/bootstrap.sh", "utf8"),
+    readFile("install/offline-manifest.env", "utf8"),
+    readFile("packages/bittune-runtime/src/cli/install/components.ts", "utf8"),
+  ]);
   assert.match(build, /runtime_selection=runtime-free/);
-  assert.doesNotMatch(installer, /nvidia-ctk|docker-ce|systemctl restart docker/);
-  assert.match(installer, /--disable-warning=ExperimentalWarning/);
-  assert.match(offlineInstaller, /--disable-warning=ExperimentalWarning/);
+  // The `bittune` launcher written by the agent component keeps warning suppression.
+  assert.match(components, /--disable-warning=ExperimentalWarning/);
+  assert.match(components, /\/usr\/local\/bin\/bittune/);
+  assert.doesNotMatch(bootstrap, /nvidia-ctk|docker-ce|systemctl restart docker|apt-get install -y --no-install-recommends docker/i);
   assert.doesNotMatch(build, /docker pull|nvidia-container-toolkit/);
   assert.doesNotMatch(manifest, /^VLLM_IMAGE=/m);
 });
