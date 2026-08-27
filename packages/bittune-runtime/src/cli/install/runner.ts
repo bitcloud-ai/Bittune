@@ -15,6 +15,8 @@ export interface InstallOptions {
   /** Release tgz (online) or offline bundle directory; exactly one is required for installs. */
   packagePath?: string;
   bundleDir?: string;
+  /** Bootstrap-prepared agent staging directory, adopted by the agent component. */
+  stageDir?: string;
 }
 
 type ExecutedStatus = "satisfied" | "installed" | "skipped" | "failed";
@@ -209,6 +211,7 @@ export async function runInstallCommand(options: InstallOptions): Promise<number
       targetUser,
       sourceKind: sourceKind ?? "network",
       payloadPath: payloadPath ?? "",
+      ...(options.stageDir ? { stageAgentDir: options.stageDir } : {}),
       appendLog,
     };
 

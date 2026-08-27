@@ -134,6 +134,15 @@ stage_agent_dist() {
   stage="$(mktemp -d "${INSTALL_ROOT}/.bootstrap-dist.XXXXXX")"
   tar -xzf "${SOURCE}" --strip-components=1 -C "${stage}"
   if [[ ! -f "${stage}/dist/bittune.js" ]]; then rm -rf "${stage}"; die "发行包缺少 dist/bittune.js。"; fi
+  # The release dist is not self-contained: production dependencies must exist
+  # before any dist code runs, including a --check-only handoff.
+  local node_bin_dir npm_bin
+  node_bin_dir="$(dirname "${1}")"
+  npm_bin="${node_bin_dir}/npm"
+  log "为引导暂存目录安装生产依赖（npm install --omit=dev）…"
+  if ! "${npm_bin}" install --omit=dev --ignore-scripts --prefix "${stage}" >/dev/null; then
+    rm -rf "${stage}"; die "npm 安装引导暂存依赖失败；检查网络或代理后重试。"
+  fi
   echo "${stage}/dist/bittune.js"
   echo "${stage}"
 }
@@ -150,7 +159,7 @@ main() {
   node_bin="$(resolve_node)"
   if [[ -n ${SOURCE} ]]; then
     local parts=()
-    mapfile -t parts < <(stage_agent_dist)
+    mapfile -t parts < <(stage_agent_dist "${node_bin}")
     dist_file="${parts[0]}"
     dist_stage="${parts[1]:-}"
   fi
@@ -164,6 +173,7 @@ main() {
   append_forward --user "${USER_ARG}"
   if [[ ${MODE} == "package" ]]; then append_forward --package "${SOURCE}"; fi
   if [[ ${MODE} == "offline" ]]; then append_forward --offline "${SOURCE}"; fi
+  if [[ -n ${dist_stage} ]]; then append_forward --stage-dir "${dist_stage}"; fi
 
   local rc=0
   "${node_bin}" "${dist_file}" install ${FORWARD[@]+"${FORWARD[@]}"} || rc=$?

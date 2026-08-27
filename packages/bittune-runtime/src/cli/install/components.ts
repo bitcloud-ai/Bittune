@@ -57,6 +57,8 @@ export interface InstallContext {
   sourceKind: "network" | "bundle";
   /** Release tgz path (network) or offline bundle root directory (bundle). */
   payloadPath: string;
+  /** Bootstrap-prepared agent staging directory (deps already installed); adopted when valid. */
+  stageAgentDir?: string;
   appendLog: LogSink;
 }
 
@@ -237,6 +239,17 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
         : "pending";
     },
     async install(ctx) {
+      // Bootstrap hands over a prepared staging directory for online installs;
+      // adopting it avoids a second extract + npm pass.
+      const provided = ctx.stageAgentDir ? resolve(ctx.stageAgentDir) : "";
+      if (provided && existsSync(join(provided, "package.json")) && existsSync(join(provided, "dist", "bittune.js"))) {
+        await mkdir(join(ctx.installRoot, "backups"), { recursive: true });
+        await replaceDirectory(provided, agentRoot(ctx), () => backupPath(ctx, "agent"));
+        const launcherPath = "/usr/local/bin/bittune";
+        await mkdir(dirname(launcherPath), { recursive: true }).catch(() => undefined);
+        await writeFile(launcherPath, launcherScript(ctx), { mode: 0o755 });
+        return `Bittune ${VERSION} 已就绪（采用引导暂存目录），入口 ${launcherPath}。`;
+      }
       const stage = join(ctx.installRoot, `.agent-install-${uniqueStamp()}`);
       await mkdir(stage, { recursive: true });
       try {

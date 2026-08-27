@@ -18,6 +18,8 @@ export interface BittuneInstallOptions {
 	user?: string;
 	packagePath?: string;
 	bundleDir?: string;
+	/** Bootstrap-prepared agent staging directory; adopted instead of a fresh extract. */
+	stageDir?: string;
 }
 
 export type BittuneCliInvocation =
@@ -141,6 +143,7 @@ function parseInstall(args: string[]): BittuneCliInvocation {
 			case "--user": options.user = value(); break;
 			case "--package": options.packagePath = value(); break;
 			case "--offline": options.bundleDir = value(); break;
+			case "--stage-dir": options.stageDir = value(); break;
 			default: throw usageError(`Unknown option \"${arg}\" for bittune install.`);
 		}
 	}
