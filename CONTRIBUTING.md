@@ -27,11 +27,11 @@ npm run test:gpu-acceptance   # 需要真实 Linux GPU 主机
 
 ## 文档纪律
 
-Bittune 的文档有明确生命周期规则（见 [`docs/documentation-lifecycle.md`](docs/documentation-lifecycle.md)），贡献时请遵守：
+贡献时请遵守 Bittune 的文档生命周期规则：
 
 - "当前实现/已发布/已验证"只能描述代码、测试或 Run Record 已经证明的事实；
-- 计划与待办只写在活动计划里（`docs/plans/`），不要提前把目标能力写进 Tool Contract 或 README；
-- 长期边界变化通过 ADR（`docs/decisions/`）记录；
+- 计划与待办只写在活动计划里，不要提前把目标能力写进 Tool Contract 或 README；
+- 长期边界变化通过架构决策记录（ADR）沉淀；
 - 仓库正文统一使用 **Bittune** 作为产品名。
 
 ## 设计讨论

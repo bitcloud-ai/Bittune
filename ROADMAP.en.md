@@ -90,12 +90,11 @@ Non-goals matter as much as the roadmap; none of the following will appear in an
 - Bittune does not install cluster infrastructure, does not build its own scheduler, and does not replace existing resource management systems.
 - Externally running model services are read-only by default; only resources created and ownership-registered by Bittune are ever managed.
 - No resident production monitoring/alerting platform; continuous observation is a later stage with its own entry conditions.
-- Hosted cloud consoles, centralized multi-device operations, and commercial value-added services are outside this repository's scope and delivered separately via official distributions.
 - No promise of "works out of the box on any hardware": every new device class passes a real-environment identity and artifact verification gate before being declared supported.
 
 ## Long-term constraints across all stages
 
-Full discussions live in [`docs/architecture/`](docs/architecture/README.md); excerpted items that apply everywhere:
+The following principles apply everywhere; the public architecture write-up ships with the documentation set:
 
 - The Agent only proposes; all real operations go through managed tools that can be authorized, cancelled, recovered, and rolled back.
 - Permission, resource ownership, and evidence are three orthogonal concepts and must not be conflated with tool visibility.
@@ -106,5 +105,5 @@ Full discussions live in [`docs/architecture/`](docs/architecture/README.md); ex
 
 - Share ideas through Issues (`feature_request` template) or start Discussions.
 - For larger design changes, open an RFC-style Discussion first and reach consensus before development starts.
-- This document is maintained on a rolling window (usually synced per minor release); "Planned" items get broken down into implementation plans with acceptance criteria when they enter development (see [`docs/plans/`](docs/plans/current.md)).
+- This document is maintained on a rolling window (usually synced per minor release); "Planned" items get broken down into implementation plans with acceptance criteria when they enter development.
 - Please do not report security vulnerabilities in public issues — follow [`SECURITY.md`](SECURITY.md).
