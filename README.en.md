@@ -46,7 +46,7 @@ cd bittune-<version>-linux-x86_64
 sudo ./install.sh
 ```
 
-The installer detects online or offline package contents automatically, installs the required Node.js and Bittune components, and creates `/usr/local/bin/bittune`. The offline package uses the same `sudo ./install.sh` command and never contacts the network. Online installs also prepare the optional pinned Python measurement tools.
+The installer detects online or offline package contents automatically, installs the required Node.js and Bittune components, and creates `/usr/local/bin/bittune`. The offline package uses the same `sudo ./install.sh` command and never contacts the network. Online installs also prepare the optional fixed-version Python measurement tools.
 
 Configure an OpenAI-compatible Agent LLM endpoint, then launch:
 
@@ -57,18 +57,18 @@ bittune doctor
 bittune
 ```
 
-For full prerequisites, offline installation, and configuration details see [Quick Start](guide/getting-started.md). The online installer bootstraps pinned EvalScope and Hugging Face CLI tooling into `/opt/bittune/py` and adds them to PATH; GPU drivers, Docker, NVIDIA Container Toolkit, runtime images, and models are prepared by the administrator as needed — run `bittune doctor` to inspect each item.
+For full prerequisites, offline installation, and configuration details see [Quick Start](guide/getting-started.md). The online installer installs fixed-version EvalScope and Hugging Face CLI tooling into `/opt/bittune/py`, and the Bittune launcher uses this environment automatically at runtime; GPU drivers, Docker, NVIDIA Container Toolkit, runtime images, and models are prepared by the administrator as needed — run `bittune doctor` to inspect each item.
 
 ## Requirements
 
-- Linux packages support mainstream glibc x86_64 hosts (Ubuntu, Debian, RHEL, Rocky, Fedora, openSUSE, and similar) and prepare a pinned Node.js runtime automatically.
+- Linux packages support mainstream glibc x86_64 hosts (Ubuntu, Debian, RHEL, Rocky, Fedora, openSUSE, and similar) and prepare a pinned Node.js runtime automatically (v22.22.2 in current packages); whether your environment meets the requirements is what `bittune doctor` reports.
 - Any OpenAI-compatible Agent LLM endpoint is required to start Bittune.
 - GPUs, Docker, NVIDIA Container Toolkit, vLLM/SGLang, model caches, and EvalScope are on-demand capabilities; prepare them only when your goal involves the corresponding operations.
 - For an explicit deployment target, the Agent may pull runtime images and Hugging Face model snapshots through restricted Domain Tools, and discovers existing vLLM/SGLang images automatically via `discover_runtime_images`. You can optionally point `BITTUNE_RUNTIME_POLICY_FILE` at a registry allowlist JSON to constrain permitted image sources.
 
 ## Running from source
 
-Development requires Node.js >= 22.19.0:
+Source development requires Node.js >= 22.19.0 (release packages ship their own pinned Node.js, independent of your system installation):
 
 ```bash
 npm install
@@ -90,6 +90,14 @@ npm run test:gpu-acceptance
 - [Operations Guide](guide/operations.md): working directory, provider prerequisites, evidence storage, and MCP operations.
 - [Documentation Index](guide/README.md): navigation and support scope.
 - [Roadmap](ROADMAP.en.md): product landscape and P1–P4 direction.
+- User guides are currently published in Simplified Chinese; English versions are planned.
+
+## Community
+
+- [Contributing](CONTRIBUTING.md): development setup, commit conventions, and design discussions.
+- [Support](SUPPORT.md): usage questions, bug reports, and feature requests.
+- [Security](SECURITY.md): private vulnerability disclosure.
+- Ideas and issues: [Issues](https://github.com/bitcloud-ai/Bittune/issues) and [Discussions](https://github.com/bitcloud-ai/Bittune/discussions).
 
 ## License
 

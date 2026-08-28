@@ -23,5 +23,6 @@ architecture/*.visual-check.*
 # Internal-only content: never publish
 /vision/
 /architecture/
+/AGENTS.md
 docs/qa-report-*
 docs/deep-usage-test-*

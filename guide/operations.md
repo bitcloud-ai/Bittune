@@ -30,14 +30,15 @@ Preset、受管服务与 Run 记录按启动 `bittune` 时所在的目录划分�
 
 ## 推理 Provider 前置条件
 
-只有目标需要本机推理、模型下载或性能测试时，才准备以下工具：
+只有目标需要本机推理、模型下载或性能测试时，才准备以下工具。在线安装器会自动把固定版本的 EvalScope 与 Hugging Face CLI 安装到 `/opt/bittune/py`，Bittune 启动器在运行时自动使用该环境。手动准备时请使用独立虚拟环境，避免写入系统 Python：
 
 ```bash
 docker info
 nvidia-smi
-python3 -m pip install 'huggingface_hub[cli]==1.27.0' 'evalscope[perf]==1.10.0'
-hf --help
-evalscope perf --help
+python3 -m venv /opt/bittune/py
+/opt/bittune/py/bin/pip install 'huggingface_hub[cli]==1.27.0' 'evalscope[perf]==1.10.0'
+/opt/bittune/py/bin/hf --help
+/opt/bittune/py/bin/evalscope perf --help
 ```
 
 Bittune 对外部 Runtime、模型、服务和端点默认只读，发现到的容器与端点仅作为参考事实；受管操作只作用于 Bittune 创建并登记的资源。Hugging Face 是当前唯一可下载并进入受管部署闭环的模型源；ModelScope 本地缓存只用于发现。
@@ -89,29 +90,9 @@ MCP 服务不可用时，Bittune 保留本机工具能力，并在运行时给�
 
 `toolPurposes` 可选值为 `reference`、`model-recommendation` 和 `deployment-knowledge`。MCP 只提供可选参考，不是发布 Preset、启动服务或压测的前置；MCP 不可用时，Agent 继续使用本机 Domain Tool，并明确区分 measured 与 estimated。
 
-## 真实 GPU 验收
-
-在 Linux GPU 主机完成 vLLM 和 SGLang 的 Observation、启动、Ready、Probe、EvalScope Benchmark 和停止后，传入对应 Run ID 验证证据链：
-
-```bash
-export BITTUNE_STATE_DIR="$HOME/.bittune/state"
-export BITTUNE_ACCEPT_VLLM_OBSERVE_RUN=run-...
-export BITTUNE_ACCEPT_VLLM_START_RUN=run-...
-export BITTUNE_ACCEPT_VLLM_READY_RUN=run-...
-export BITTUNE_ACCEPT_VLLM_PROBE_RUN=run-...
-export BITTUNE_ACCEPT_VLLM_BENCHMARK_RUN=run-...
-export BITTUNE_ACCEPT_VLLM_STOP_RUN=run-...
-export BITTUNE_ACCEPT_SGLANG_OBSERVE_RUN=run-...
-export BITTUNE_ACCEPT_SGLANG_START_RUN=run-...
-export BITTUNE_ACCEPT_SGLANG_READY_RUN=run-...
-export BITTUNE_ACCEPT_SGLANG_PROBE_RUN=run-...
-export BITTUNE_ACCEPT_SGLANG_BENCHMARK_RUN=run-...
-export BITTUNE_ACCEPT_SGLANG_STOP_RUN=run-...
-npm run test:gpu-acceptance
-```
-
 ## 对话与工具行为
 
-正常运行 `bittune` 即可开始或继续对话。Agent 从第一轮就拿到完整可信的领域工具目录，并根据最新用户目标选择工具；没有能力切换，也没有强制的 MCP 步骤。`--fresh` 仅用于明确需要隔离证据命名空间的场景。
+正常运行 `bittune` 即可开始或继续对话，Agent 依据你的当前目标自主选择工具。以下行为可以按需控制：
 
-Runtime 镜像发现会自动找到本机已有的 vLLM/SGLang 镜像；可选的 `runtime-policy.json` 可限制允许的镜像仓库范围。模型 Revision 解析会在发布 DeploymentPreset 之前返回不可变的 commit SHA。
+- 可选的 `runtime-policy.json` 白名单限制允许使用的 Runtime 镜像仓库范围；
+- 发布部署配置前，模型 Revision 会被解析为不可变的 commit SHA，保证部署内容可追溯。
