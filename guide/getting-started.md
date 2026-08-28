@@ -11,10 +11,10 @@ cd bittune-<version>-linux-x86_64
 sudo ./install.sh
 ```
 
-安装器会自动检查主机、识别在线或离线包内容、准备 Node.js 与 Bittune，并创建
+安装器会自动检查主机、识别在线或离线包内容、准备固定版本 Node.js（当前为 v22.22.2）与 Bittune，并创建
 `/usr/local/bin/bittune`。离线包使用同一条 `sudo ./install.sh` 命令。
 
-在线包会下载生产 npm 依赖和钉版的 Python 测量工具；离线包包含 Node.js 和
+在线包会下载生产 npm 依赖和固定版本的 Python 测量工具；离线包包含 Node.js 和
 生产 npm 依赖，全程不访问网络，除非宿主上已准备好 Python 工具，否则会跳过。
 
 安装完成后，`bittune` 可在任意目录使用：

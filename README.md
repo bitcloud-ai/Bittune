@@ -45,7 +45,7 @@ cd bittune-<version>-linux-x86_64
 sudo ./install.sh
 ```
 
-安装器会自动识别在线或离线包、安装 Node.js 与 Bittune，并创建 `/usr/local/bin/bittune`。离线包使用同一个 `sudo ./install.sh` 命令且不访问网络；在线安装会另外准备可选的钉版 Python 测量工具。
+安装器会自动识别在线或离线包、安装 Node.js 与 Bittune，并创建 `/usr/local/bin/bittune`。离线包使用同一个 `sudo ./install.sh` 命令且不访问网络；在线安装会另外准备可选的固定版本 Python 测量工具。
 
 配置 OpenAI-compatible Agent LLM，然后启动：
 
@@ -56,18 +56,18 @@ bittune doctor
 bittune
 ```
 
-完整的前置条件、离线安装和配置说明见[快速开始](guide/getting-started.md)。在线安装器会把钉版的 EvalScope 与 Hugging Face CLI 自举到 `/opt/bittune/py` 并挂入 PATH；GPU 驱动、Docker、NVIDIA Container Toolkit、Runtime 镜像与模型由管理员按需准备，运行 `bittune doctor` 可查看各项状态。
+完整的前置条件、离线安装和配置说明见[快速开始](guide/getting-started.md)。在线安装器会把固定版本的 EvalScope 与 Hugging Face CLI 安装到 `/opt/bittune/py`，Bittune 启动器在运行时自动使用该环境；GPU 驱动、Docker、NVIDIA Container Toolkit、Runtime 镜像与模型由管理员按需准备，运行 `bittune doctor` 可查看各项状态。
 
 ## 运行要求
 
-- Linux 发行包支持主流 glibc x86_64 主机（Ubuntu、Debian、RHEL、Rocky、Fedora、openSUSE 等），安装器会自动准备固定版本 Node.js。
+- Linux 发行包支持主流 glibc x86_64 主机（Ubuntu、Debian、RHEL、Rocky、Fedora、openSUSE 等），安装器会自动准备固定版本 Node.js（当前为 v22.22.2）；实际环境是否满足要求以 `bittune doctor` 检查结果为准。
 - 任意 OpenAI-compatible Agent LLM endpoint 是启动 Bittune 的必需条件。
 - GPU、Docker、NVIDIA Container Toolkit、vLLM/SGLang、模型缓存和 EvalScope 都是按需能力；只有目标涉及对应操作时才需要准备。
 - 对用户明确的部署目标，Agent 可通过受限 Domain Tool 拉取 Runtime 镜像和 Hugging Face 模型 Snapshot，并通过 `discover_runtime_images` 自动发现本机已有的 vLLM/SGLang 镜像。可选配置 `BITTUNE_RUNTIME_POLICY_FILE` 指向镜像仓库白名单 JSON 以限制允许的镜像范围。
 
 ## 从源码运行
 
-开发环境需要 Node.js >= 22.19.0：
+源码开发需要 Node.js >= 22.19.0（发行包自带固定版本 Node.js，与系统安装的版本无关）：
 
 ```bash
 npm install
@@ -89,6 +89,13 @@ npm run test:gpu-acceptance
 - [运行指南](guide/operations.md)：运行目录、Provider 前置条件、证据存储和 MCP 运维。
 - [用户文档首页](guide/README.md)：文档导航与支持范围。
 - [路线图](ROADMAP.md)：产品版图与 P1–P4 演进方向。
+
+## 参与
+
+- [贡献指南](CONTRIBUTING.md)：开发环境、提交规范与设计讨论。
+- [支持与求助](SUPPORT.md)：使用问题、Bug 反馈与功能建议。
+- [安全政策](SECURITY.md)：漏洞私密披露。
+- 问题与想法请使用 [Issues](https://github.com/bitcloud-ai/Bittune/issues) 与 [Discussions](https://github.com/bitcloud-ai/Bittune/discussions)。
 
 ## 许可证
 

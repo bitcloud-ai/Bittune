@@ -1,6 +1,6 @@
 # Bittune Roadmap
 
-简体中文 ｜ [English](ROADMAP.en.md)
+[简体中文](ROADMAP.md) ｜ English
 
 > This document describes Bittune's product positioning and direction. Stages are defined by the results a user can obtain, not by dates; entries are kept at theme level so they can be expanded or collapsed as needed. Last updated: 2026-08-28.
 
