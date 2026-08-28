@@ -189,8 +189,7 @@ export async function runInstallCommand(options: InstallOptions): Promise<number
       ({ sourceKind, payloadPath } = resolvePayload(options));
     }
 
-    const targetUser = options.user ?? process.env.SUDO_USER ?? "";
-    if (!checkOnly && !targetUser) fail("未识别目标用户；请追加 --user <user> 指定运行 Bittune 的 Linux 用户。");
+    const targetUser = options.user || "root";
 
     mkdirSync(INSTALL_ROOT, { recursive: true });
     const logPath = join(INSTALL_ROOT, "install.log");
