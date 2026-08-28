@@ -23,15 +23,15 @@ Bittune 将环境检查、模型发现、服务部署、可用性探测、性能
 
 ## 快速开始
 
-从 [GitHub Releases](https://github.com/bitcloud-ai/Bittune/releases) 下载 `bittune-installer-<version>.tar.gz`，在 Ubuntu x86_64 主机安装：
+从 [GitHub Releases](https://github.com/bitcloud-ai/Bittune/releases) 下载 `bittune-<version>-linux-x86_64.tar.gz`，在主流 glibc Linux x86_64 主机安装：
 
 ```bash
-tar -xzf bittune-installer-<version>.tar.gz
-cd bittune-installer-<version>
-sudo ./bootstrap.sh --package ./bittune-runtime-<version>.tgz <linux-user> --yes
+tar -xzf bittune-<version>-linux-x86_64.tar.gz
+cd bittune-<version>-linux-x86_64
+sudo ./install.sh
 ```
 
-安装前可先执行只读体检：把上面命令的 `--yes` 换成 `--check-only`，输出环境与前置项现状且不做任何修改。安装过程分阶段打印体检、计划、执行与自检；任何一步失败都会给出原因、建议命令与日志位置（`/opt/bittune/install.log`），重跑幂等、自动跳过已完成组件。离线主机使用离线 bundle 目录并以 `--offline <bundle目录>` 安装。
+安装器会自动识别在线或离线包、安装 Node.js 与 Bittune，并创建 `/usr/local/bin/bittune`。离线包使用同一个 `sudo ./install.sh` 命令且不访问网络；在线安装会另外准备可选的钉版 Python 测量工具。
 
 配置 OpenAI-compatible Agent LLM，然后启动：
 
@@ -46,7 +46,7 @@ bittune
 
 ## 运行要求
 
-- Linux 发行包当前支持 apt-based x86_64 主机，并携带固定 Node.js 运行时。
+- Linux 发行包支持主流 glibc x86_64 主机（Ubuntu、Debian、RHEL、Rocky、Fedora、openSUSE 等），安装器会自动准备固定版本 Node.js。
 - 任意 OpenAI-compatible Agent LLM endpoint 是启动 Bittune 的必需条件。
 - GPU、Docker、NVIDIA Container Toolkit、vLLM/SGLang、模型缓存和 EvalScope 都是按需能力；只有目标涉及对应操作时才需要准备。
 - 安装器不会安装或修改 GPU 驱动、Docker/NVIDIA Toolkit、容器镜像或模型。对用户明确的部署目标，Agent 可通过受限 Domain Tool 拉取 Runtime 镜像和 Hugging Face 模型 Snapshot。

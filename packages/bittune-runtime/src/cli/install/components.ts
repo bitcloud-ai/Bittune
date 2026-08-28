@@ -27,7 +27,27 @@ async function shOk(command: string, args: string[], log: LogSink, timeoutMs = 3
 }
 
 async function commandExists(command: string, log: LogSink): Promise<boolean> {
-  return shOk("bash", ["-c", `command -v ${JSON.stringify(command)} >/dev/null 2>&1`], log);
+	return shOk("bash", ["-c", `command -v ${JSON.stringify(command)} >/dev/null 2>&1`], log);
+}
+
+async function detectPackageManager(log: LogSink): Promise<string | undefined> {
+	for (const manager of ["apt-get", "dnf", "yum", "zypper", "pacman"] as const) {
+		if (await commandExists(manager, log)) return manager;
+	}
+	return undefined;
+}
+
+async function installSystemPackages(packages: string[], log: LogSink): Promise<boolean> {
+	const manager = await detectPackageManager(log);
+	if (!manager) return false;
+	if (manager === "apt-get") {
+		const updated = await sh("apt-get", ["update"], log, 300_000);
+		if (updated.exit_code !== 0) return false;
+		return (await sh("apt-get", ["install", "-y", "--no-install-recommends", ...packages], log, 600_000)).exit_code === 0;
+	}
+	if (manager === "zypper") return (await sh("zypper", ["--non-interactive", "install", ...packages], log, 600_000)).exit_code === 0;
+	if (manager === "pacman") return (await sh("pacman", ["-Sy", "--noconfirm", ...packages], log, 600_000)).exit_code === 0;
+	return (await sh(manager, ["install", "-y", ...packages], log, 600_000)).exit_code === 0;
 }
 
 function firstErrorLine(stderr: string): string {
@@ -165,24 +185,19 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     required: true,
     applies: (ctx) => ctx.sourceKind === "network",
     async describe() {
-      return { version: "apt ca-certificates/curl", source: "apt repositories" };
+      return { version: "tar/curl", source: "host distribution package manager" };
     },
     async detect(ctx) {
-      return (await commandExists("curl", ctx.appendLog)) && (await commandExists("tar", ctx.appendLog)) ? "satisfied" : "pending";
+      return (await commandExists("tar", ctx.appendLog)) ? "satisfied" : "pending";
     },
     async install(ctx) {
-      for (const command of ["apt-get", "curl", "tar"]) {
-        if (!(await commandExists(command, ctx.appendLog))) throw new Error(`缺少基础命令：${command}；请先安装系统基础工具。`);
-      }
-      await sh("apt-get", ["update"], ctx.appendLog, 300_000);
-      const installed = await sh("apt-get", ["install", "-y", "--no-install-recommends", "ca-certificates", "curl"], ctx.appendLog, 600_000);
-      if (installed.exit_code !== 0) throw new Error(`apt 安装基础依赖失败：${firstErrorLine(installed.stderr)}`);
-      return "ca-certificates 与 curl 就绪。";
+      if (await commandExists("tar", ctx.appendLog)) return "tar is available";
+      throw new Error("tar is required; install it with your distribution package manager and rerun the installer.");
     },
     async verify(ctx) {
-      const ok = (await commandExists("curl", ctx.appendLog)) && (await commandExists("tar", ctx.appendLog));
-      if (!ok) throw new Error("curl/tar 在装后仍不可用。");
-      return "curl / tar 可用";
+      const ok = await commandExists("tar", ctx.appendLog);
+      if (!ok) throw new Error("tar is unavailable after installation.");
+      return "tar is available";
     },
     fixHints: [
       { test: /Failed to fetch|Temporary failure|resolv|^E: /i, advice: "apt 源不可达；检查网络/DNS 或 /etc/apt/sources.list 后重试。" },
@@ -286,7 +301,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       await mkdir(stage, { recursive: true });
       try {
         if (ctx.sourceKind === "bundle") {
-          const copied = await sh("cp", ["-a", join(resolve(ctx.payloadPath), "agent"), stage], ctx.appendLog, 300_000);
+          const copied = await sh("cp", ["-a", `${join(resolve(ctx.payloadPath), "agent")}/.`, stage], ctx.appendLog, 300_000);
           if (copied.exit_code !== 0) throw new Error(`复制离线包内容失败：${firstErrorLine(copied.stderr)}`);
         } else {
           await extractReleasePackage(ctx, stage);
@@ -336,24 +351,34 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       return existsSync(join(pyRoot(ctx), "bin", "evalscope")) && existsSync(join(pyRoot(ctx), "bin", "hf")) ? "satisfied" : "pending";
     },
     async install(ctx) {
+      if (ctx.sourceKind === "bundle") {
+        throw new ComponentSkipped("离线包未携带 Python wheelhouse；为保证离线安装不访问网络，Python 测量工具需另行准备。")
+      }
       if (!(await commandExists("python3", ctx.appendLog))) {
-        if (ctx.sourceKind !== "network") {
-          throw new ComponentSkipped("离线主机未检测到 python3；请手动安装后重跑，或改用在线安装器。");
-        }
-        const installed = await sh("apt-get", ["install", "-y", "--no-install-recommends", "python3", "python3-venv"], ctx.appendLog, 600_000);
-        if (installed.exit_code !== 0) throw new ComponentSkipped(`宿主机缺少 python3 且自动安装失败：${firstErrorLine(installed.stderr)}`);
+        const manager = await detectPackageManager(ctx.appendLog);
+        const pythonPackages = manager === "pacman"
+          ? ["python", "python-pip"]
+          : manager === "dnf" || manager === "yum"
+            ? ["python3", "python3-pip"]
+            : ["python3", "python3-venv"];
+        const installed = await installSystemPackages(pythonPackages, ctx.appendLog);
+        if (!installed) throw new ComponentSkipped("宿主机缺少 python3，且未找到可用的发行版包管理器；请先安装 Python 3 后重跑安装器。");
+        if (!(await commandExists("python3", ctx.appendLog))) throw new ComponentSkipped("宿主机缺少 python3 且自动安装失败；请先安装 Python 3 后重跑安装器。");
       }
       if (!existsSync(join(pyRoot(ctx), "bin", "pip"))) {
         await rm(pyRoot(ctx), { recursive: true, force: true });
         const created = await sh("python3", ["-m", "venv", pyRoot(ctx)], ctx.appendLog, 300_000);
         if (created.exit_code !== 0 || !existsSync(join(pyRoot(ctx), "bin", "pip"))) {
-          throw new ComponentSkipped("创建 Python 虚拟环境失败（通常缺少 python3-venv）：sudo apt-get install -y python3-venv 后重跑安装器。");
+          throw new ComponentSkipped("创建 Python 虚拟环境失败（通常缺少 venv 支持）；请安装发行版对应的 Python venv 包后重跑安装器。");
         }
       }
       const requirementCandidates = [ctx.requirementsPath, join(agentRoot(ctx), "requirements.txt")].filter((path): path is string => Boolean(path));
       const requirements = requirementCandidates.find((path) => existsSync(path));
       if (!requirements) {
         throw new ComponentSkipped("未找到 requirements.txt；请按指南手动准备钉版 evalscope/hf（pip install -r requirements.txt）。");
+      }
+      if (process.env.BITTUNE_INSTALL_OFFLINE === "1") {
+        throw new ComponentSkipped("offline package has no Python wheelhouse; optional measurement tools were skipped.");
       }
       const pipBin = join(pyRoot(ctx), "bin", "pip");
       const installedTools = await sh(pipBin, ["install", "--quiet", "-r", requirements], ctx.appendLog, 1_800_000);
@@ -374,7 +399,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     },
     fixHints: [
       { test: /pypi|ReadTimeout|Retry|proxy/i, advice: "PyPI 不可达；配置代理后重试（export HTTPS_PROXY=...）。" },
-      { test: /ensurepip|python3-venv|venv/i, advice: "sudo apt-get install -y python3-venv 后重跑安装器。" },
+      { test: /ensurepip|python3-venv|venv/i, advice: "请安装发行版对应的 Python venv/ensurepip 包后重跑安装器。" },
     ],
   },
 ];

@@ -36,8 +36,19 @@ jobs:
       - name: Package installer
         run: npm run package:agent
 
+      - name: Validate installer entrypoints
+        run: |
+          bash -n install/bootstrap.sh
+          bash -n install/build-offline-bundle.sh
+          tar -tzf release/bittune-${GITHUB_REF_NAME#v}-linux-x86_64.tar.gz >/dev/null
+          tar -tzf release/bittune-${GITHUB_REF_NAME#v}-linux-x86_64-offline.tar.gz >/dev/null
+          test ! -e release/bittune-runtime-${GITHUB_REF_NAME#v}.tgz
+
       - name: Create Release
         uses: softprops/action-gh-release@c95fe1489396fe8a9eb4c170d6b0e3eaaf984254 # v2.2.1
         with:
           generate_release_notes: true
-          files: release/*.tar.gz
+          files: |
+            release/*.tar.gz
+            release/*.sha256
+            release/*-sbom.cdx.json

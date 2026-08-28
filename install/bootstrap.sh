@@ -1,194 +1,92 @@
 #!/usr/bin/env bash
-# Bittune bootstrap: the only shell in the install path. It prepares a runnable
-# pinned Node.js and hands off to the component-driven installer inside the
-# release bundle (`node dist/bittune.js install ...`).
-#
-# Usage:
-#   sudo ./bittune-bootstrap.sh --package <bittune-runtime.tgz> <linux-user> [--yes] [--json] [--check-only]
-#   sudo ./bittune-bootstrap.sh --offline <bundle-dir>    <linux-user> [--yes] [--json]
-# Legacy habit is accepted: ./bittune-bootstrap.sh <tgz-or-bundle-dir> <linux-user>
-#
-# NODE_VERSION/NODE_SHA256 must stay identical to install/offline-manifest.env
-# and packages/bittune-runtime/src/cli/install/components.ts.
 set -euo pipefail
 
+# Single-command installer. The extracted release directory is its source.
+readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly INSTALL_ROOT="${BITTUNE_INSTALL_ROOT:-/opt/bittune}"
 readonly NODE_VERSION="v22.22.2"
 readonly NODE_SHA256="88fd1ce767091fd8d4a99fdb2356e98c819f93f3b1f8663853a2dee9b438068a"
-readonly INSTALL_ROOT="${BITTUNE_INSTALL_ROOT:-/opt/bittune}"
+die() { printf 'bittune installer: %s\n' "$*" >&2; exit 1; }
+log() { printf '[bittune] %s\n' "$*"; }
+[[ "$(uname -s)" == Linux ]] || die "Linux is required."
+[[ "$(uname -m)" == x86_64 ]] || die "This release supports Linux x86_64 only."
+[[ ${EUID} -eq 0 ]] || die "Run the installer with sudo: sudo ./install.sh"
+[[ -f "${SCRIPT_DIR}/manifest.json" ]] || die "manifest.json is missing from the release package."
+[[ -f "${SCRIPT_DIR}/agent/dist/bittune.js" ]] || die "Bittune payload is missing from the release package."
+grep -q '"architecture": "linux-x86_64"' "${SCRIPT_DIR}/manifest.json" || die "Unsupported or invalid package manifest."
+if [[ -f "${SCRIPT_DIR}/SHA256SUMS" && -x "$(command -v sha256sum || true)" ]]; then (cd "${SCRIPT_DIR}" && sha256sum --check --status SHA256SUMS) || die "Package integrity verification failed."; fi
 
-die() { echo "bittune-bootstrap: $*" >&2; exit 1; }
-log() { echo "[bittune-bootstrap] $*"; }
-
-MODE=""          # package | offline | ""
-SOURCE=""
-USER_ARG=""
-FORWARD=()
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --package|--offline)
-      [[ -z ${MODE} ]] || die "只能提供一次安装来源。"
-      MODE="${1#--}"; SOURCE="${2:-}"
-      [[ -n ${SOURCE} ]] || die "$1 需要一个路径参数。"
-      shift 2 ;;
-    --user)
-      USER_ARG="${2:-}"; shift 2 ;;
-    -*)
-      FORWARD+=("$1"); shift ;;
-    *)
-      if [[ -z ${SOURCE} ]]; then
-        SOURCE="$1"
-        if [[ -d ${SOURCE} ]]; then MODE="offline";
-        elif [[ ${SOURCE} == *.tgz || ${SOURCE} == *.tar.gz ]]; then MODE="package";
-        fi
-      elif [[ -z ${USER_ARG} ]]; then
-        USER_ARG="$1"
-      else
-        FORWARD+=("$1")
-      fi
-      shift ;;
+detect_user() {
+  if [[ -n ${SUDO_USER:-} && ${SUDO_USER} != root ]] && id -u "${SUDO_USER}" >/dev/null 2>&1; then printf '%s' "${SUDO_USER}"; return; fi
+  local candidates=() name uid home _rest
+  while IFS=: read -r name _ uid _ _ home _rest; do
+    [[ ${uid} -ge 1000 && ${uid} -lt 60000 && -d ${home} ]] && candidates+=("${name}")
+  done < /etc/passwd
+  if [[ ${#candidates[@]} -eq 1 ]]; then printf '%s' "${candidates[0]}"; return; fi
+  [[ -n ${BITTUNE_USER:-} ]] && id -u "${BITTUNE_USER}" >/dev/null 2>&1 && printf '%s' "${BITTUNE_USER}" && return
+  die "Cannot determine a non-root Linux user; set BITTUNE_USER and rerun."
+}
+has() { command -v "$1" >/dev/null 2>&1; }
+install_system_tools() {
+  local missing=() tool; for tool in tar gzip xz sha256sum; do has "${tool}" || missing+=("${tool}"); done; has curl || has wget || missing+=("curl or wget"); [[ ${#missing[@]} -eq 0 ]] && return
+  local manager=""; for tool in apt-get dnf yum zypper pacman; do if has "${tool}"; then manager="${tool}"; break; fi; done
+  [[ -n ${manager} ]] || die "Missing tools: ${missing[*]}; install them with your distribution package manager."
+  log "Installing missing system tools with ${manager}..."
+  case ${manager} in
+    apt-get) apt-get update; apt-get install -y ca-certificates curl tar xz-utils gzip coreutils ;;
+    dnf|yum) "${manager}" install -y ca-certificates curl tar xz gzip coreutils ;;
+    zypper) zypper --non-interactive install ca-certificates curl tar xz gzip coreutils ;;
+    pacman) pacman -Sy --noconfirm ca-certificates curl tar xz gzip coreutils ;;
   esac
-done
-
-CHECK_ONLY=false
-for flag in "${FORWARD[@]+${FORWARD[@]}}"; do
-  if [[ ${flag} == "--check-only" ]]; then CHECK_ONLY=true; fi
-done
-
-[[ $(uname -s) == "Linux" ]] || die "仅支持 Linux 宿主机。"
-[[ $(uname -m) == "x86_64" ]] || die "发行包仅包含 linux-x64 运行时，需要 x86_64 主机。"
-
-if [[ ${CHECK_ONLY} != true ]]; then
-  [[ ${EUID} -eq 0 ]] || die "请使用 sudo 运行（需要写入 ${INSTALL_ROOT} 与 /usr/local/bin）。"
-fi
-
-prepare_network_tools() {
-  if command -v curl >/dev/null 2>&1 && command -v tar >/dev/null 2>&1 && command -v sha256sum >/dev/null 2>&1; then
-    return 0
-  fi
-  log "补充系统基础工具 ca-certificates/curl/tar…"
-  apt-get update >/dev/null
-  apt-get install -y --no-install-recommends ca-certificates curl tar
 }
-
-append_forward() {
-  if [[ ${#FORWARD[@]} -gt 0 ]]; then FORWARD+=("$@"); else FORWARD=("$@"); fi
+check_offline_tools() {
+  local missing=() tool; for tool in tar gzip xz sha256sum; do has "${tool}" || missing+=("${tool}"); done
+  [[ ${#missing[@]} -eq 0 ]] || die "Offline installation requires: ${missing[*]}. Install them before disconnecting the host."
 }
-
-resolve_existing_pinned_node() {
-  local candidate="${INSTALL_ROOT}/node/bin/node"
-  if [[ -x ${candidate} ]] && [[ "$("${candidate}" --version 2>/dev/null || true)" == "${NODE_VERSION}" ]]; then
-    echo "${candidate}"; return 0
-  fi
-  if command -v node >/dev/null 2>&1 && [[ "$(node --version 2>/dev/null || true)" == "${NODE_VERSION}" ]]; then
-    command -v node; return 0
-  fi
-  return 1
+download_node() {
+  local stage="$1"
+  local archive="${stage}/node.tar.xz"
+  local url="https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-x64.tar.xz"
+  mkdir -p "${stage}"
+  if has curl; then curl --fail --location --proto '=https' --tlsv1.2 "${url}" --output "${archive}"; else wget -O "${archive}" "${url}"; fi
+  local digest; digest="$(sha256sum "${archive}" | awk '{print $1}')"; [[ ${digest} == "${NODE_SHA256}" ]] || die "Node.js SHA-256 verification failed."
+  tar -xJf "${archive}" -C "${stage}"; [[ -x "${stage}/node-${NODE_VERSION}-linux-x64/bin/node" ]] || die "Node.js archive is incomplete."
+  rm -rf "${INSTALL_ROOT}/node"; mv "${stage}/node-${NODE_VERSION}-linux-x64" "${INSTALL_ROOT}/node"; rm -rf "${stage}"
 }
-
-fetch_and_install_node() {
-  prepare_network_tools
-  local stage archive digest extracted
-  stage="$(mktemp -d "${INSTALL_ROOT}/.bootstrap-node.XXXXXX")"
-  archive="${stage}/node.tar.xz"
-  curl --fail --location --proto '=https' --tlsv1.2 \
-    "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-x64.tar.xz" --output "${archive}"
-  digest="$(sha256sum "${archive}" | awk '{print $1}')"
-  [[ ${digest} == "${NODE_SHA256}" ]] || { rm -rf "${stage}"; die "Node.js SHA-256 校验失败（期望 ${NODE_SHA256:0:12}…，实际 ${digest:0:12}…）。"; }
-  tar -xJf "${archive}" -C "${stage}"
-  extracted="${stage}/node-${NODE_VERSION}-linux-x64"
-  [[ -x ${extracted}/bin/node ]] || { rm -rf "${stage}"; die "Node.js 解压结果不完整。"; }
-  mkdir -p "${INSTALL_ROOT}/backups"
-  if [[ -d ${INSTALL_ROOT}/node ]]; then mv "${INSTALL_ROOT}/node" "${INSTALL_ROOT}/backups/node-$(date -u +%Y%m%dT%H%M%S)"; fi
-  mv "${extracted}" "${INSTALL_ROOT}/node"
-  rm -rf "${stage}"
-  echo "${INSTALL_ROOT}/node/bin/node"
-}
-
-resolve_node() {
-  local resolved
-  if resolved="$(resolve_existing_pinned_node)"; then echo "${resolved}"; return 0; fi
-  if [[ ${MODE} == "offline" ]]; then
-    local bundled="${SOURCE}/node-${NODE_VERSION}-linux-x64/bin/node"
-    [[ -x ${bundled} ]] || die "离线包缺少 node-${NODE_VERSION}-linux-x64/bin/node。"
-    echo "${bundled}"; return 0
-  fi
-  if [[ ${MODE} == "package" ]]; then
-    fetch_and_install_node; return 0
-  fi
-  die "--check-only 需要一个 Node ${NODE_VERSION}：请先完成一次安装，或提供 --package/--offline 来源。"
-}
-
-# Sets STAGE_DIST_FILE and STAGE_DIST_STAGE as its return channel; never echoes,
-# because log output must be able to use stdout freely inside this function.
-stage_agent_dist() {
-  STAGE_DIST_FILE=""
-  STAGE_DIST_STAGE=""
-  local node_bin="${1}"
-  if [[ ${MODE} == "offline" ]]; then
-    [[ -f "${SOURCE}/agent/dist/bittune.js" ]] || die "离线包缺少 agent/dist/bittune.js。"
-    if [[ -f "${SOURCE}/SHA256SUMS" ]]; then
-      (cd "${SOURCE}" && sha256sum --check --status SHA256SUMS) || die "离线包完整性校验失败。"
-    fi
-    STAGE_DIST_FILE="${SOURCE}/agent/dist/bittune.js"
-    return 0
-  fi
-  prepare_network_tools
-  local stage
-  stage="$(mktemp -d "${INSTALL_ROOT}/.bootstrap-dist.XXXXXX")"
-  tar -xzf "${SOURCE}" --strip-components=1 -C "${stage}"
-  if [[ ! -f "${stage}/dist/bittune.js" ]]; then rm -rf "${stage}"; die "发行包缺少 dist/bittune.js。"; fi
-  # The release dist is not self-contained: production dependencies must exist
-  # before any dist code runs, including a --check-only handoff.
-  local npm_bin
-  npm_bin="$(dirname "${node_bin}")/npm"
-  log "为引导暂存目录安装生产依赖（npm install --omit=dev）…"
-  if ! "${npm_bin}" install --omit=dev --ignore-scripts --prefix "${stage}" >/dev/null; then
-    rm -rf "${stage}"; die "npm 安装引导暂存依赖失败；检查网络或代理后重试。"
-  fi
-  STAGE_DIST_FILE="${stage}/dist/bittune.js"
-  STAGE_DIST_STAGE="${stage}"
-}
-
 main() {
-  if [[ -z ${SOURCE} && ${CHECK_ONLY} != true ]]; then
-    die "必须通过 --package <tgz> 或 --offline <bundle目录> 提供安装来源。"
+  local target_user; target_user="$(detect_user)"; mkdir -p "${INSTALL_ROOT}/staging" "${INSTALL_ROOT}/backups"
+  local node_bin="${INSTALL_ROOT}/node/bin/node" offline=false
+  if [[ -x "${SCRIPT_DIR}/node-${NODE_VERSION}-linux-x64/bin/node" ]]; then
+    offline=true; if [[ ! -x ${node_bin} ]]; then rm -rf "${INSTALL_ROOT}/node"; cp -a "${SCRIPT_DIR}/node-${NODE_VERSION}-linux-x64" "${INSTALL_ROOT}/node"; fi
+  elif [[ ! -x ${node_bin} || "$("${node_bin}" --version 2>/dev/null || true)" != "${NODE_VERSION}" ]]; then
+    install_system_tools
+    download_node "${INSTALL_ROOT}/staging/node"
   fi
-  if [[ -n ${MODE} && ${MODE} != package && ${MODE} != offline ]]; then
-    die "无法识别来源类型：${SOURCE}；请显式使用 --package 或 --offline。"
+  if [[ ${offline} == true ]]; then
+    check_offline_tools
+  else
+    install_system_tools
   fi
-
-  local node_bin
-  node_bin="$(resolve_node)"
-  if [[ -n ${SOURCE} ]]; then
-    stage_agent_dist "${node_bin}"
+  if grep -q '"package_type": "offline"' "${SCRIPT_DIR}/manifest.json" && [[ ${offline} != true ]]; then die "Offline package is missing its bundled Node.js runtime."; fi
+  if [[ ${offline} == true && ! -d "${SCRIPT_DIR}/agent/node_modules" ]]; then die "Offline package is missing production node_modules."; fi
+  node_bin="${INSTALL_ROOT}/node/bin/node"
+  if [[ ${offline} != true && ! -d "${SCRIPT_DIR}/agent/node_modules" ]]; then
+    log "Installing Bittune production dependencies..."
+    "${INSTALL_ROOT}/node/bin/npm" install --omit=dev --ignore-scripts --prefix "${SCRIPT_DIR}/agent" >/dev/null || die "npm dependency installation failed; check network or proxy settings."
   fi
-  local dist_file="${STAGE_DIST_FILE:-}"
-  local dist_stage="${STAGE_DIST_STAGE:-}"
-  if [[ -z ${dist_file} ]]; then
-    dist_file="${INSTALL_ROOT}/agent/dist/bittune.js"
-    [[ -f ${dist_file} ]] || die "未找到已安装的 Bittune；check-only 需要 --package/--offline 来源或已完成的基础安装。"
+  local args
+  if [[ ${offline} == true ]]; then
+    args=(install --offline "${SCRIPT_DIR}" --user "${target_user}" --yes --requirements "${SCRIPT_DIR}/requirements.txt")
+  else
+    local payload_dir="${INSTALL_ROOT}/staging/payload/package"
+    rm -rf "${INSTALL_ROOT}/staging/payload"
+    mkdir -p "${payload_dir}"
+    cp -a "${SCRIPT_DIR}/agent/." "${payload_dir}/"
+    tar -czf "${INSTALL_ROOT}/staging/bittune-payload.tar.gz" -C "${INSTALL_ROOT}/staging/payload" package
+    args=(install --package "${INSTALL_ROOT}/staging/bittune-payload.tar.gz" --user "${target_user}" --yes --requirements "${SCRIPT_DIR}/requirements.txt")
   fi
-
-  [[ -n ${USER_ARG} ]] || USER_ARG="${SUDO_USER:-}"
-
-  append_forward --user "${USER_ARG}"
-  if [[ ${MODE} == "package" ]]; then append_forward --package "${SOURCE}"; fi
-  if [[ ${MODE} == "offline" ]]; then append_forward --offline "${SOURCE}"; fi
-  if [[ -n ${dist_stage} ]]; then append_forward --stage-dir "${dist_stage}"; fi
-
-  local reqs=""
-  local script_dir
-  script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-  for cand in "${script_dir}/requirements.txt" "${SOURCE}/requirements.txt" "${SOURCE}/../requirements.txt"; do
-    if [[ -f ${cand} ]]; then reqs="${cand}"; break; fi
-  done
-  if [[ -n ${reqs} ]]; then append_forward --requirements "${reqs}"; fi
-
-  local rc=0
-  "${node_bin}" "${dist_file}" install ${FORWARD[@]+"${FORWARD[@]}"} || rc=$?
-  if [[ -n ${dist_stage} ]]; then rm -rf "${dist_stage}"; fi
-  exit "${rc}"
+  log "Installing Bittune for ${target_user}..."; "${node_bin}" "${SCRIPT_DIR}/agent/dist/bittune.js" "${args[@]}"
+  rm -rf "${INSTALL_ROOT}/staging/bittune-payload.tar.gz" "${INSTALL_ROOT}/staging/payload"
+  log "Installed. Run 'bittune version' from any directory."
 }
-
 main "$@"

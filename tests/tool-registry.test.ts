@@ -723,7 +723,7 @@ test("versioned comparison enforces sample evidence and objective CV stability",
 
 test("base distribution is runtime-free and does not mutate GPU providers", async () => {
   const [build, bootstrap, manifest, components] = await Promise.all([
-    readFile("install/build-offline-bundle-ubuntu.sh", "utf8"),
+    readFile("install/build-offline-bundle.sh", "utf8"),
     readFile("install/bootstrap.sh", "utf8"),
     readFile("install/offline-manifest.env", "utf8"),
     readFile("packages/bittune-runtime/src/cli/install/components.ts", "utf8"),
