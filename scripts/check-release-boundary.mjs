@@ -17,6 +17,8 @@ const expectedPaths = [
 	"LICENSE",
 	"README.en.md",
 	"README.md",
+	"ROADMAP.en.md",
+	"ROADMAP.md",
 	"THIRD_PARTY_NOTICES.md",
 	"dist/bittune.js",
 	"dist/modes/interactive/theme/dark.json",

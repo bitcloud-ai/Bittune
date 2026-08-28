@@ -23,6 +23,9 @@
     "guide/**",
     "LICENSE",
     "README.md",
+    "README.en.md",
+    "ROADMAP.md",
+    "ROADMAP.en.md",
     "THIRD_PARTY_NOTICES.md"
   ],
   "engines": {
