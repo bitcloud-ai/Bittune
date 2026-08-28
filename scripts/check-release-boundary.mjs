@@ -15,6 +15,7 @@ const packed = JSON.parse(
 const paths = packed.files.map(({ path }) => path).sort();
 const expectedPaths = [
 	"LICENSE",
+	"README.en.md",
 	"README.md",
 	"THIRD_PARTY_NOTICES.md",
 	"dist/bittune.js",

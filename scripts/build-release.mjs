@@ -37,6 +37,7 @@ await cp("install/offline-manifest.env", join(stage, "offline-manifest.env"));
 await cp("install/requirements.txt", join(stage, "requirements.txt"));
 await cp(join(distribution, packed.filename), join(stage, packed.filename));
 await cp("README.md", join(stage, "README.md"));
+await cp("README.en.md", join(stage, "README.en.md"));
 execFileSync(process.execPath, ["scripts/generate-sbom.mjs", join(stage, "bittune-sbom.cdx.json")], {
   stdio: "inherit",
 });
