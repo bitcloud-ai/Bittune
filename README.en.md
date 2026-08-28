@@ -46,7 +46,7 @@ cd bittune-<version>-linux-x86_64
 sudo ./install.sh
 ```
 
-The installer detects online or offline package contents automatically, installs the required Node.js and Bittune components, and creates `/usr/local/bin/bittune`. The offline package uses the same `sudo ./install.sh` command and never contacts the network. Online installs also prepare the optional fixed-version Python measurement tools.
+The installer detects online or offline package contents automatically, installs the required Node.js and Bittune components, and creates `/usr/local/bin/bittune`. The offline package uses the same `sudo ./install.sh` command and never contacts the network. Online installs also prepare the optional fixed-version Python measurement tools. Bittune installs and runs as root: run `bittune` in a root session after installation; to run as a regular user instead, add that user to the `docker` group.
 
 Configure an OpenAI-compatible Agent LLM endpoint, then launch:
 

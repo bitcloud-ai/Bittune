@@ -17,6 +17,8 @@ sudo ./install.sh
 在线包会下载生产 npm 依赖和固定版本的 Python 测量工具；离线包包含 Node.js 和
 生产 npm 依赖，全程不访问网络，除非宿主上已准备好 Python 工具，否则会跳过。
 
+Bittune 以 root 安装并在 root 下使用；如需改用普通用户运行，请将该用户加入 `docker` 组。
+
 安装完成后，`bittune` 可在任意目录使用：
 
 ```bash

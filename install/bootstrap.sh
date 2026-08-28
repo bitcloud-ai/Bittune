@@ -16,16 +16,6 @@ log() { printf '[bittune] %s\n' "$*"; }
 grep -q '"architecture": "linux-x86_64"' "${SCRIPT_DIR}/manifest.json" || die "Unsupported or invalid package manifest."
 if [[ -f "${SCRIPT_DIR}/SHA256SUMS" && -x "$(command -v sha256sum || true)" ]]; then (cd "${SCRIPT_DIR}" && sha256sum --check --status SHA256SUMS) || die "Package integrity verification failed."; fi
 
-detect_user() {
-  if [[ -n ${SUDO_USER:-} && ${SUDO_USER} != root ]] && id -u "${SUDO_USER}" >/dev/null 2>&1; then printf '%s' "${SUDO_USER}"; return; fi
-  local candidates=() name uid home _rest
-  while IFS=: read -r name _ uid _ _ home _rest; do
-    [[ ${uid} -ge 1000 && ${uid} -lt 60000 && -d ${home} ]] && candidates+=("${name}")
-  done < /etc/passwd
-  if [[ ${#candidates[@]} -eq 1 ]]; then printf '%s' "${candidates[0]}"; return; fi
-  [[ -n ${BITTUNE_USER:-} ]] && id -u "${BITTUNE_USER}" >/dev/null 2>&1 && printf '%s' "${BITTUNE_USER}" && return
-  die "Cannot determine a non-root Linux user; set BITTUNE_USER and rerun."
-}
 has() { command -v "$1" >/dev/null 2>&1; }
 install_system_tools() {
   local missing=() tool; for tool in tar gzip xz sha256sum; do has "${tool}" || missing+=("${tool}"); done; has curl || has wget || missing+=("curl or wget"); [[ ${#missing[@]} -eq 0 ]] && return
@@ -54,7 +44,8 @@ download_node() {
   rm -rf "${INSTALL_ROOT}/node"; mv "${stage}/node-${NODE_VERSION}-linux-x64" "${INSTALL_ROOT}/node"; rm -rf "${stage}"
 }
 main() {
-  local target_user; target_user="$(detect_user)"; mkdir -p "${INSTALL_ROOT}/staging" "${INSTALL_ROOT}/backups"
+  local target_user="root"
+  mkdir -p "${INSTALL_ROOT}/staging" "${INSTALL_ROOT}/backups"
   local node_bin="${INSTALL_ROOT}/node/bin/node" offline=false
   if [[ -x "${SCRIPT_DIR}/node-${NODE_VERSION}-linux-x64/bin/node" ]]; then
     offline=true; if [[ ! -x ${node_bin} ]]; then rm -rf "${INSTALL_ROOT}/node"; cp -a "${SCRIPT_DIR}/node-${NODE_VERSION}-linux-x64" "${INSTALL_ROOT}/node"; fi
@@ -87,6 +78,6 @@ main() {
   fi
   log "Installing Bittune for ${target_user}..."; "${node_bin}" "${SCRIPT_DIR}/agent/dist/bittune.js" "${args[@]}"
   rm -rf "${INSTALL_ROOT}/staging/bittune-payload.tar.gz" "${INSTALL_ROOT}/staging/payload"
-  log "Installed. Run 'bittune version' from any directory."
+  log "Installed. Run 'bittune version' as root from any directory."
 }
 main "$@"
