@@ -40,7 +40,7 @@ hf --help
 evalscope perf --help
 ```
 
-Bittune 对外部 Runtime、模型、服务和端点默认只读。它不会因为发现到容器或端点就自动接管、停止或修改它们。Hugging Face 是当前唯一可下载并进入受管部署闭环的模型源；ModelScope 本地缓存只用于发现。
+Bittune 对外部 Runtime、模型、服务和端点默认只读，发现到的容器与端点仅作为参考事实；受管操作只作用于 Bittune 创建并登记的资源。Hugging Face 是当前唯一可下载并进入受管部署闭环的模型源；ModelScope 本地缓存只用于发现。
 
 ## 证据与状态
 
@@ -110,6 +110,8 @@ export BITTUNE_ACCEPT_SGLANG_STOP_RUN=run-...
 npm run test:gpu-acceptance
 ```
 
-## Current conversational contract
+## 对话与工具行为
 
-Run `bittune` normally for a new or continued conversation. The Agent receives the complete trusted Domain Tool catalog from the first turn and chooses tools from the latest user goal; there is no capability switch or mandatory MCP step. Use `--fresh` only when you explicitly need an isolated evidence namespace. Runtime image discovery automatically finds local vLLM/SGLang images; an optional `runtime-policy.json` can restrict allowed repositories. Model revision resolution returns an immutable commit SHA before a DeploymentPreset is published.
+正常运行 `bittune` 即可开始或继续对话。Agent 从第一轮就拿到完整可信的领域工具目录，并根据最新用户目标选择工具；没有能力切换，也没有强制的 MCP 步骤。`--fresh` 仅用于明确需要隔离证据命名空间的场景。
+
+Runtime 镜像发现会自动找到本机已有的 vLLM/SGLang 镜像；可选的 `runtime-policy.json` 可限制允许的镜像仓库范围。模型 Revision 解析会在发布 DeploymentPreset 之前返回不可变的 commit SHA。

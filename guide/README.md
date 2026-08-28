@@ -1,6 +1,8 @@
 # Bittune 用户文档
 
-本目录只描述已经可用的 Bittune 产品能力，不包含内部设计、开发计划或历史实现记录。
+Bittune 是运行在你自己 GPU 机器上的推理工程智能体：用自然语言描述目标，它完成环境检查、模型选择、vLLM/SGLang 部署、性能压测和参数调优，并把结论记录成可复核的执行证据。
+
+本目录只描述当前已可用的产品能力。产品版图与演进方向（BitTune Cloud、社区、排行榜）见[路线图](../ROADMAP.md)。
 
 - [快速开始](getting-started.md)：安装、配置 Agent LLM、启动和恢复会话。
 - [运行指南](operations.md)：运行目录、推理 Provider 前置条件、证据存储和 MCP 运维。
