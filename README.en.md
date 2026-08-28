@@ -4,9 +4,37 @@
 
 An engineering agent for GPU inference deployment, benchmarking, and tuning.
 
-[Quick Start](guide/getting-started.md) · [Operations Guide](guide/operations.md) · [Documentation Index](guide/README.md) · [Roadmap](ROADMAP.en.md)
+[Quick Start](guide/getting-started.md) · [Operations Guide](guide/operations.md) · [Full Product Architecture](guide/product-architecture.en.md) · [Documentation Index](guide/README.md) · [Roadmap](ROADMAP.en.md)
 
-## What it does
+## Product position
+
+Bittune is not merely a collection of GPU scripts. This repository is the open-source, device-side agent and engineering execution entry point of the broader BitTune product. The complete product has four cooperating parts:
+
+1. **Bittune Local (this repository):** runs on customer GPU nodes and provides conversational interaction, environment inspection, managed model/engine operations, real benchmarking, tuning experiments, stable candidate comparison, and local evidence.
+2. **BitTune Cloud (product roadmap):** manages users, devices, versions, certified model/quantization/engine/tool combinations, signed manifests, and optional image distribution. Local obtains certified combinations through an outbound secure connection while execution remains controlled on the customer side.
+3. **Cloud community and leaderboards (product roadmap):** publish reviewable tuning outcomes, user/team profiles, peer-machine comparisons, and evidence-backed rankings.
+4. **Knowledge return and Router (product roadmap):** with explicit consent, minimized and redacted experience can become governed knowledge candidates and signed knowledge packs. Validated model services may optionally enter Router supply and commercialization flows.
+
+```text
+customer GPU devices/nodes
+  ↓  Bittune Local: inspect, deploy, benchmark, tune, preserve evidence
+usable model API + like-for-like comparison report
+  ↕  explicitly authorized minimized data / signed product knowledge
+BitTune Cloud: certified catalog, versions, images, devices, and teams
+  ↓
+community · peer leaderboards · knowledge return · Router commercial entry
+```
+
+### Current code versus product roadmap
+
+| Scope | Current status |
+|---|---|
+| Pi-powered TUI agent, managed domain tools, vLLM/SGLang, benchmarking/tuning, local Run Records/Artifacts, session resume, read-only MCP | **Implemented in the current `0.4.0` source** |
+| Cloud account/device management, certified combination catalog, version and image distribution | **Cloud integration roadmap; not delivered by this repository today** |
+| Community, leaderboards, experience cohorts, signed knowledge return | **Product roadmap requiring separate acceptance** |
+| Router publishing and token supply | **Later commercial integration roadmap** |
+
+## What the current open-source version does
 
 Bittune organizes environment inspection, model discovery, service deployment, availability probing, performance testing, and evidence recording into auditable engineering tools. The Agent chooses the next step based on your goal, current observations, and existing run records — it never runs a fixed pipeline.
 
@@ -18,6 +46,13 @@ Bittune organizes environment inspection, model discovery, service deployment, a
 - Does not take over external runtimes, models, services, or endpoints by default; all writes go through restricted domain tools.
 - Exposes managed operations through a static Domain Tool Registry; the Agent selects tools per conversational goal rather than switching session phases.
 - Optionally connects to administrator-configured read-only MCP servers. MCP provides reference knowledge only; actual environment facts and execution evidence always come from local tools.
+
+## Why Cloud, community, and leaderboards matter
+
+- **Cloud does not replace customer-side execution.** Cloud provides certified tool combinations, model/quantization/engine plans, signed versions, and optional artifact sources; Local installs, validates, and executes them against the real device environment.
+- **Community discussions are backed by evidence.** Users may opt in to share redacted report summaries, configurations, and conclusions. Raw prompts, model outputs, datasets, and secrets are not uploaded by default.
+- **Leaderboards compare only comparable evidence.** Cohorts are keyed by GPU model/count/topology, model/fixed revision/quantization, engine/version, workload, and benchmark standard before comparing throughput, latency, memory headroom, stability, or tuning improvement.
+- **Knowledge never silently contaminates customer systems.** Experience first becomes a governed candidate, passes quality/privacy/comparability/security review, and is returned as a signed, staged knowledge pack that still requires local validation.
 
 ## Quick start
 
@@ -72,6 +107,7 @@ npm run test:gpu-acceptance
 
 - [Quick Start](guide/getting-started.md): installation, first configuration, and session resume.
 - [Operations Guide](guide/operations.md): working directory, provider prerequisites, evidence storage, and MCP operations.
+- [Full Product Architecture](guide/product-architecture.en.md): boundaries among Local, Cloud, community, leaderboards, knowledge return, and Router.
 - [Documentation Index](guide/README.md): navigation and support scope.
 - [Roadmap](ROADMAP.en.md): public product direction and non-goals.
 
