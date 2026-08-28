@@ -32,7 +32,7 @@ npm run test:gpu-acceptance   # 需要真实 Linux GPU 主机
 
 ## 设计讨论
 
-涉及长期架构边界的改动（领域契约、Tool 面、Provider 边界）请先在 Discussions 提交 RFC 形式的提案。开发前请先阅读 [ROADMAP](ROADMAP.md) 与相关 ADR，确认方向一致——特别是那些被明确列为非目标的事项。
+涉及长期架构边界的改动（领域契约、Tool 面、Provider 边界）请先在 Discussions 提交 RFC 形式的提案。开发前请先阅读 [ROADMAP](ROADMAP.md)，确认方向一致——优先推进路线图上已排期的阶段，避免与之冲突的重复实现。
 
 ## 安全问题
 

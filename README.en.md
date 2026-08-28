@@ -2,22 +2,39 @@
 
 [简体中文](README.md) ｜ [English](README.en.md)
 
-An engineering agent for GPU inference deployment, benchmarking, and tuning.
+![Release](https://img.shields.io/github/v/release/bitcloud-ai/Bittune) [![CI](https://img.shields.io/github/actions/workflow/status/bitcloud-ai/Bittune/ci.yml?label=CI)](https://github.com/bitcloud-ai/Bittune/actions/workflows/ci.yml) ![License](https://img.shields.io/badge/license-MIT-blue.svg)
+
+## What Bittune is
+
+Bittune is an **inference engineering agent** that runs on your own GPU machine: you state the goal in natural language, and it handles environment inspection, model selection, vLLM/SGLang service deployment, performance benchmarking, and parameter tuning — recording every conclusion as auditable execution evidence.
+
+```text
+You say: "Deploy Qwen on this RTX 5090 with vLLM and maximize throughput"
+Bittune: inspects GPU/Docker environment → discovers local models → deploys vLLM (managed)
+        → benchmarks via EvalScope → measures candidate configurations one by one
+        → reports the best configuration with a before/after comparison
+```
+
+Every performance conclusion comes from **real deployments and real benchmarks**, bound to environment fingerprints and configuration hashes; failures are recorded too, and variance is reported honestly.
+
+## Product landscape
+
+- **Bittune Local** (open source today): everything above, running locally and fully usable offline.
+- **BitTune Cloud** (planned): an optional cloud platform — a certified catalog of model/engine/tool combinations, multi-device management, a community with verifiable leaderboards, and tuning-experience feedback. See the [Roadmap](ROADMAP.en.md).
+
+Core principle: **the cloud provides facts, the client executes for real.** Every deployment and tuning action happens on your device, confirmed by you, through auditable managed tools; raw prompts, model outputs, secrets, and datasets stay on your device.
 
 [Quick Start](guide/getting-started.md) · [Operations Guide](guide/operations.md) · [Documentation Index](guide/README.md) · [Roadmap](ROADMAP.en.md)
 
 ## What it does
 
-Bittune organizes environment inspection, model discovery, service deployment, availability probing, performance testing, and evidence recording into auditable engineering tools. The Agent chooses the next step based on your goal, current observations, and existing run records — it never runs a fixed pipeline.
-
 - Reads GPU, Linux, Docker, and NVIDIA runtime state; discovers local model caches and existing services.
 - Creates and manages vLLM or SGLang services with restricted configurations, performing start, readiness check, endpoint probing, log reading, and stop as independently auditable operations.
 - Runs standardized benchmarks against managed services via EvalScope `perf`, persisting raw output as Run Records and Artifacts.
-- Derives a `MeasuredOperatingPoint` from measurements taken against the same deployment, environment, workload, and configuration — a single success is never misreported as maximum capacity.
+- Derives a `MeasuredOperatingPoint` from repeated measurements against the same deployment, environment, workload, and configuration — reporting the operating range and capacity boundary.
 - Records tuning and capacity-exploration experiments with repeatable baselines, candidate comparison, and traceable conclusions.
-- Does not take over external runtimes, models, services, or endpoints by default; all writes go through restricted domain tools.
-- Exposes managed operations through a static Domain Tool Registry; the Agent selects tools per conversational goal rather than switching session phases.
-- Optionally connects to administrator-configured read-only MCP servers. MCP provides reference knowledge only; actual environment facts and execution evidence always come from local tools.
+- Exposes managed operations through a static Domain Tool Registry; the Agent selects tools per conversational goal.
+- Optionally connects to administrator-configured read-only MCP servers; actual environment facts and execution evidence always come from local tools.
 
 ## Quick start
 
@@ -40,15 +57,14 @@ bittune doctor
 bittune
 ```
 
-For full prerequisites, offline installation, and configuration details see [Quick Start](guide/getting-started.md). The online installer bootstraps pinned EvalScope and Hugging Face CLI tooling into `/opt/bittune/py` and adds them to PATH; GPU drivers, Docker, NVIDIA Container Toolkit, runtime images, and models are always prepared by the administrator — run `bittune doctor` to inspect each item.
+For full prerequisites, offline installation, and configuration details see [Quick Start](guide/getting-started.md). The online installer bootstraps pinned EvalScope and Hugging Face CLI tooling into `/opt/bittune/py` and adds them to PATH; GPU drivers, Docker, NVIDIA Container Toolkit, runtime images, and models are prepared by the administrator as needed — run `bittune doctor` to inspect each item.
 
 ## Requirements
 
 - Linux packages support mainstream glibc x86_64 hosts (Ubuntu, Debian, RHEL, Rocky, Fedora, openSUSE, and similar) and prepare a pinned Node.js runtime automatically.
 - Any OpenAI-compatible Agent LLM endpoint is required to start Bittune.
 - GPUs, Docker, NVIDIA Container Toolkit, vLLM/SGLang, model caches, and EvalScope are on-demand capabilities; prepare them only when your goal involves the corresponding operations.
-- The installer never installs or modifies GPU drivers, Docker/NVIDIA toolkit, container images, or models. For an explicit deployment target, the Agent may pull runtime images and Hugging Face model snapshots through restricted Domain Tools.
-- The Agent discovers existing vLLM/SGLang images automatically via `discover_runtime_images`. You can optionally point `BITTUNE_RUNTIME_POLICY_FILE` at a registry allowlist JSON to constrain permitted image sources.
+- For an explicit deployment target, the Agent may pull runtime images and Hugging Face model snapshots through restricted Domain Tools, and discovers existing vLLM/SGLang images automatically via `discover_runtime_images`. You can optionally point `BITTUNE_RUNTIME_POLICY_FILE` at a registry allowlist JSON to constrain permitted image sources.
 
 ## Running from source
 
@@ -73,7 +89,7 @@ npm run test:gpu-acceptance
 - [Quick Start](guide/getting-started.md): installation, first configuration, and session resume.
 - [Operations Guide](guide/operations.md): working directory, provider prerequisites, evidence storage, and MCP operations.
 - [Documentation Index](guide/README.md): navigation and support scope.
-- [Roadmap](ROADMAP.en.md): public product direction and non-goals.
+- [Roadmap](ROADMAP.en.md): product landscape and P1–P4 direction.
 
 ## License
 
