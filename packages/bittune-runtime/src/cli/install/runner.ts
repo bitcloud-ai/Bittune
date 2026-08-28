@@ -190,7 +190,7 @@ export async function runInstallCommand(options: InstallOptions): Promise<number
     }
 
     const targetUser = options.user ?? process.env.SUDO_USER ?? "";
-    if (!checkOnly && !targetUser) fail("未识别目标用户；请追加 --user <user> 指定运行 Bittune 的普通 Linux 用户。");
+    if (!checkOnly && !targetUser) fail("未识别目标用户；请追加 --user <user> 指定运行 Bittune 的 Linux 用户。");
 
     mkdirSync(INSTALL_ROOT, { recursive: true });
     const logPath = join(INSTALL_ROOT, "install.log");
@@ -306,7 +306,7 @@ export async function runInstallCommand(options: InstallOptions): Promise<number
       `结果：${counts.satisfied} 已满足 · ${counts.installed} 新装 · ${counts.skipped} 跳过${report.warnings.length ? ` · ${report.warnings.length} 条警告` : ""}`,
       ...report.warnings.map((warning) => `  ⚠ ${warning}`),
       "",
-      "下一步（切换到目标用户后执行）：",
+      `下一步（以 ${targetUser} 身份执行）：`,
       `  export BITTUNE_AGENT_LLM_API_KEY='你的 Agent 模型密钥'`,
       "  bittune configure --base-url https://endpoint/v1 --model-id your-tool-capable-model",
       "  bittune doctor",

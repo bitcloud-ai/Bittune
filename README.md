@@ -45,7 +45,7 @@ cd bittune-<version>-linux-x86_64
 sudo ./install.sh
 ```
 
-安装器会自动识别在线或离线包、安装 Node.js 与 Bittune，并创建 `/usr/local/bin/bittune`。离线包使用同一个 `sudo ./install.sh` 命令且不访问网络；在线安装会另外准备可选的固定版本 Python 测量工具。
+安装器会自动识别在线或离线包、安装 Node.js 与 Bittune，并创建 `/usr/local/bin/bittune`。离线包使用同一个 `sudo ./install.sh` 命令且不访问网络；在线安装会另外准备可选的固定版本 Python 测量工具。Bittune 以 root 安装并在 root 下使用：安装后在 root 会话中执行 `bittune`；如需改用普通用户运行，请将该用户加入 `docker` 组。
 
 配置 OpenAI-compatible Agent LLM，然后启动：
 
