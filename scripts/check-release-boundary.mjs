@@ -15,6 +15,7 @@ const packed = JSON.parse(
 const paths = packed.files.map(({ path }) => path).sort();
 const expectedPaths = [
 	"LICENSE",
+	"README.en.md",
 	"README.md",
 	"THIRD_PARTY_NOTICES.md",
 	"dist/bittune.js",
@@ -24,7 +25,7 @@ const expectedPaths = [
 	"guide/getting-started.md",
 	"guide/operations.md",
 	"install/bootstrap.sh",
-	"install/build-offline-bundle-ubuntu.sh",
+	"install/build-offline-bundle.sh",
 	"install/offline-manifest.env",
 	"install/requirements.txt",
 	"package.json",

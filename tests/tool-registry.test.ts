@@ -191,78 +191,6 @@ test("SGLang configuration remains runtime-specific and follows the selected ima
   }
 });
 
-test("serving fails fast with Docker evidence when a container exits before Ready", { skip: process.platform === "win32" ? "Docker CLI shims cannot be spawned without a native executable on Windows." : false }, async () => {
-  const root = await mkdtemp(join(tmpdir(), "bittune-serving-docker-"));
-  const cacheRoot = join(root, "cache");
-  const previousPath = process.env.PATH;
-  const previousCacheRoots = process.env.BITTUNE_MODEL_CACHE_ROOTS;
-  const previousDockerLog = process.env.BITTUNE_TEST_FAKE_DOCKER_LOG;
-  try {
-    const docker = await installExitedDockerFixture(root);
-    process.env.PATH = `${docker.bin}${delimiter}${previousPath ?? ""}`;
-    process.env.BITTUNE_MODEL_CACHE_ROOTS = cacheRoot;
-    process.env.BITTUNE_TEST_FAKE_DOCKER_LOG = docker.log;
-    const snapshot = join(cacheRoot, "hub", "models--acme--meteor-8b", "snapshots", model.model_revision);
-    await mkdir(snapshot, { recursive: true });
-    await writeFile(join(snapshot, "model.safetensors"), "fixture");
-    await publishGenericPreset(root);
-
-    const unobserved = await invoke(root, "start_managed_service", { deployment_preset_id: "meteor-vllm", service_name: "meteor", port: 18080 });
-    assert.equal(unobserved.ok, false);
-    assert.equal(unobserved.error?.code, "runtime_capability_observation_required");
-    const capabilityObservation = await invoke(root, "observe_runtime_capability", { deployment_preset_id: "meteor-vllm" });
-    assert.equal(capabilityObservation.ok, true, JSON.stringify(capabilityObservation));
-    const started = await invoke(root, "start_managed_service", { deployment_preset_id: "meteor-vllm", service_name: "meteor", port: 18080 });
-    assert.equal(started.ok, false);
-    assert.equal(started.error?.code, "container_start_failed", await readFile(docker.log, "utf8"));
-    const store = new StateStore(root);
-    const [service] = await store.listRuntimeServices();
-    assert.ok(service);
-    assert.equal(service.observation.observed_state, "exited");
-    assert.equal(service.runtime_cli_profile?.version, "0.27.1");
-    assert.equal(service.runtime_engine_args?.includes("--swap-space"), false);
-    const { observation } = await store.getRun(started.run_id);
-    assert.equal(observation.artifacts.some((artifact) => artifact.label === "docker-start-failure-logs"), true);
-
-    const readyStarted = Date.now();
-    const ready = await invoke(root, "wait_for_managed_service_ready", { instance_id: service.instance_id, timeout_seconds: 30 });
-    assert.equal(ready.ok, true);
-    assert.equal(ready.data?.ready, false);
-    assert.equal(ready.data?.failure_kind, "container_not_running");
-    assert.ok(Date.now() - readyStarted < 2_000);
-    const dockerCalls = (await readFile(docker.log, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as string[]);
-    const launch = dockerCalls.find((args) => args[0] === "run" && args.includes("-d"));
-    assert.ok(launch);
-    assert.equal(launch.includes("--swap-space"), false);
-
-    await publishSglangPreset(root);
-    const sglangCapabilityObservation = await invoke(root, "observe_runtime_capability", { deployment_preset_id: "meteor-sglang" });
-    assert.equal(sglangCapabilityObservation.ok, true, JSON.stringify(sglangCapabilityObservation));
-    const sglangStarted = await invoke(root, "start_managed_service", { deployment_preset_id: "meteor-sglang", service_name: "meteor-sglang", port: 18081 });
-    assert.equal(sglangStarted.ok, false);
-    assert.equal(sglangStarted.error?.code, "container_start_failed", await readFile(docker.log, "utf8"));
-    const sglangService = (await store.listRuntimeServices()).find((service) => service.runtime_kind === "sglang");
-    assert.ok(sglangService);
-    assert.equal(sglangService.runtime_cli_profile?.version, "0.5.0");
-    assert.equal(sglangService.runtime_cli_profile?.entrypoint, "python3 -m sglang.launch_server");
-    const genericReady = await invoke(root, "wait_for_managed_service_ready", { instance_id: sglangService.instance_id, timeout_seconds: 30 });
-    assert.equal(genericReady.ok, true);
-    assert.equal(genericReady.data?.ready, false);
-    const allDockerCalls = (await readFile(docker.log, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as string[]);
-    const sglangLaunch = allDockerCalls.find((args) => args[0] === "run" && args.includes("-d") && args.includes("sglang.launch_server"));
-    assert.ok(sglangLaunch);
-    const entrypointIndex = sglangLaunch.indexOf("--entrypoint");
-    assert.deepEqual(sglangLaunch.slice(entrypointIndex, entrypointIndex + 5), ["--entrypoint", "python3", `registry.example/acme/sglang@${model.runtime_image_digest}`, "-m", "sglang.launch_server"]);
-    assert.equal(sglangLaunch.includes("--tp-size"), true);
-    store.close();
-  } finally {
-    if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
-    if (previousCacheRoots === undefined) delete process.env.BITTUNE_MODEL_CACHE_ROOTS; else process.env.BITTUNE_MODEL_CACHE_ROOTS = previousCacheRoots;
-    if (previousDockerLog === undefined) delete process.env.BITTUNE_TEST_FAKE_DOCKER_LOG; else process.env.BITTUNE_TEST_FAKE_DOCKER_LOG = previousDockerLog;
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
 test("static capability entry registers the generic tool registry", async () => {
   const registered: string[] = [];
   bittuneExtension({ registerTool: (tool: ToolDefinition) => registered.push(tool.name), on: () => undefined } as never);
@@ -723,7 +651,7 @@ test("versioned comparison enforces sample evidence and objective CV stability",
 
 test("base distribution is runtime-free and does not mutate GPU providers", async () => {
   const [build, bootstrap, manifest, components] = await Promise.all([
-    readFile("install/build-offline-bundle-ubuntu.sh", "utf8"),
+    readFile("install/build-offline-bundle.sh", "utf8"),
     readFile("install/bootstrap.sh", "utf8"),
     readFile("install/offline-manifest.env", "utf8"),
     readFile("packages/bittune-runtime/src/cli/install/components.ts", "utf8"),

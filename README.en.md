@@ -21,15 +21,15 @@ Bittune organizes environment inspection, model discovery, service deployment, a
 
 ## Quick start
 
-Download `bittune-installer-<version>.tar.gz` from [GitHub Releases](https://github.com/bitcloud-ai/Bittune/releases) and install on an Ubuntu x86_64 host:
+Download `bittune-<version>-linux-x86_64.tar.gz` from [GitHub Releases](https://github.com/bitcloud-ai/Bittune/releases) and install on a mainstream glibc Linux x86_64 host:
 
 ```bash
-tar -xzf bittune-installer-<version>.tar.gz
-cd bittune-installer-<version>
-sudo ./bootstrap.sh --package ./bittune-runtime-<version>.tgz <linux-user> --yes
+tar -xzf bittune-<version>-linux-x86_64.tar.gz
+cd bittune-<version>-linux-x86_64
+sudo ./install.sh
 ```
 
-You can run a read-only preflight first by replacing `--yes` with `--check-only`; it reports the current environment and prerequisites without changing anything. Installation proceeds in stages that print preflight, plan, execution, and post-install checks; every failure reports its cause, a suggested command, and log location (`/opt/bittune/install.log`). Reruns are idempotent and skip components already satisfied. For air-gapped hosts, use an offline bundle directory and install with `--offline <bundle-dir>`.
+The installer detects online or offline package contents automatically, installs the required Node.js and Bittune components, and creates `/usr/local/bin/bittune`. The offline package uses the same `sudo ./install.sh` command and never contacts the network. Online installs also prepare the optional pinned Python measurement tools.
 
 Configure an OpenAI-compatible Agent LLM endpoint, then launch:
 
@@ -44,7 +44,7 @@ For full prerequisites, offline installation, and configuration details see [Qui
 
 ## Requirements
 
-- Linux packages currently support apt-based x86_64 hosts and bundle a pinned Node.js runtime.
+- Linux packages support mainstream glibc x86_64 hosts (Ubuntu, Debian, RHEL, Rocky, Fedora, openSUSE, and similar) and prepare a pinned Node.js runtime automatically.
 - Any OpenAI-compatible Agent LLM endpoint is required to start Bittune.
 - GPUs, Docker, NVIDIA Container Toolkit, vLLM/SGLang, model caches, and EvalScope are on-demand capabilities; prepare them only when your goal involves the corresponding operations.
 - The installer never installs or modifies GPU drivers, Docker/NVIDIA toolkit, container images, or models. For an explicit deployment target, the Agent may pull runtime images and Hugging Face model snapshots through restricted Domain Tools.
