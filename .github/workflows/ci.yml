@@ -28,11 +28,11 @@ jobs:
       - name: Type check
         run: npm run check
 
-      - name: Test
-        run: npm test
-
       - name: Build shell
         run: npm run build:shell
+
+      - name: Test
+        run: npm test
 
       - name: Verify release boundary
         run: npm run check:release-boundary
