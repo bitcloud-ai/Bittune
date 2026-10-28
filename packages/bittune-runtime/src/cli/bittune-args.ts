@@ -5,12 +5,6 @@ export interface BittuneConfigureOptions {
 	apiKeyEnv?: string;
 }
 
-export type BittuneMcpCommand =
-	| { kind: "help" }
-	| { kind: "list" }
-	| { kind: "get"; name: string }
-	| { kind: "test"; name?: string };
-
 export interface BittuneInstallOptions {
 	checkOnly: boolean;
 	json: boolean;
@@ -22,6 +16,8 @@ export interface BittuneInstallOptions {
 	stageDir?: string;
 	/** Pinned Python requirements list shipped beside the bootstrap entrypoint. */
 	requirementsPath?: string;
+	/** Directory holding the prebuilt bittune_core wheel shipped with the release. */
+	coreWheelDir?: string;
 }
 
 export type BittuneCliInvocation =
@@ -30,8 +26,7 @@ export type BittuneCliInvocation =
 	| { kind: "doctor" }
 	| { kind: "install"; options: BittuneInstallOptions }
 	| { kind: "configure"; options: BittuneConfigureOptions }
-	| { kind: "mcp"; command: BittuneMcpCommand }
-	| { kind: "interactive"; sessionId?: string; freshExperiment?: boolean; message?: string };
+	| { kind: "interactive"; sessionId?: string; message?: string };
 
 const CONFIGURE_OPTIONS: Readonly<Record<string, keyof BittuneConfigureOptions>> = {
 	"--base-url": "baseUrl",
@@ -72,38 +67,11 @@ function parseConfigure(args: string[]): BittuneCliInvocation {
 	return { kind: "configure", options };
 }
 
-function parseMcp(args: string[]): BittuneCliInvocation {
-	const [command, ...rest] = args;
-	if (command === undefined || command === "--help" || command === "-h" || command === "help") {
-		if (rest.length > 0) throw usageError("The mcp help command does not accept arguments.");
-		return { kind: "mcp", command: { kind: "help" } };
-	}
-	if (command === "list") {
-		if (rest.length > 0) throw usageError("The mcp list command does not accept arguments.");
-		return { kind: "mcp", command: { kind: "list" } };
-	}
-	if (command === "get") {
-		if (rest.length !== 1 || rest[0]!.startsWith("-")) throw usageError("Usage: bittune mcp get <name>.");
-		return { kind: "mcp", command: { kind: "get", name: rest[0]! } };
-	}
-	if (command === "test") {
-		if (rest.length > 1 || rest[0]?.startsWith("-")) throw usageError("Usage: bittune mcp test [name].");
-		return { kind: "mcp", command: { kind: "test", ...(rest[0] ? { name: rest[0] } : {}) } };
-	}
-	throw usageError(`Unknown mcp command "${command}".`);
-}
-
 function parseInteractive(args: string[]): BittuneCliInvocation {
-  const values = new Map<string, string>();
-  const messages: string[] = [];
-  let freshExperiment = false;
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index]!;
-    if (arg === "--fresh") {
-      if (freshExperiment) throw usageError("Option \"--fresh\" may only be specified once.");
-      freshExperiment = true;
-      continue;
-    }
+	const values = new Map<string, string>();
+	const messages: string[] = [];
+	for (let index = 0; index < args.length; index += 1) {
+		const arg = args[index]!;
 		if (arg === "--session") {
 			if (values.has(arg)) throw usageError("Option \"--session\" may only be specified once.");
 			const value = args[index + 1];
@@ -116,16 +84,13 @@ function parseInteractive(args: string[]): BittuneCliInvocation {
 		messages.push(arg);
 	}
 	const sessionId = values.get("--session");
-  if (sessionId && freshExperiment) {
-    throw usageError("A fresh experiment cannot resume a persisted session.");
-  }
-  return {
-    kind: "interactive",
-    ...(sessionId ? { sessionId } : {}),
-    ...(freshExperiment ? { freshExperiment: true } : {}),
-    ...(messages.length > 0 ? { message: messages.join(" ") } : {}),
-  };
+	return {
+		kind: "interactive",
+		...(sessionId ? { sessionId } : {}),
+		...(messages.length > 0 ? { message: messages.join(" ") } : {}),
+	};
 }
+
 
 function parseInstall(args: string[]): BittuneCliInvocation {
 	if (args.length === 1 && (args[0] === "--help" || args[0] === "-h")) return { kind: "help" };
@@ -147,6 +112,7 @@ function parseInstall(args: string[]): BittuneCliInvocation {
 			case "--offline": options.bundleDir = value(); break;
 			case "--stage-dir": options.stageDir = value(); break;
 			case "--requirements": options.requirementsPath = value(); break;
+			case "--core-wheel-dir": options.coreWheelDir = value(); break;
 			default: throw usageError(`Unknown option \"${arg}\" for bittune install.`);
 		}
 	}
@@ -155,7 +121,6 @@ function parseInstall(args: string[]): BittuneCliInvocation {
 
 function parseBittuneCliArgumentsInner(command: string, rest: string[]): BittuneCliInvocation | undefined {
 	if (command === "configure") return parseConfigure(rest);
-	if (command === "mcp") return parseMcp(rest);
 	if (command === "install") return parseInstall(rest);
 	return undefined;
 }

@@ -86,6 +86,18 @@ export type PackageSource =
 			themes?: string[];
 	  };
 
+export type ApprovalMode = "ask" | "session_skip" | "always_skip";
+
+export interface HarnessSettings {
+	/**
+	 * Confirmation preference for ordinary asks. `session_skip` lives only in
+	 * session memory, `always_skip` persists in the global settings file.
+	 * Explicit confirmations (dangerous shell, managed lifecycle, uploads)
+	 * are never skipped. Global-only: project settings cannot shadow it.
+	 */
+	approvalMode?: ApprovalMode; // default: "ask"
+}
+
 export interface Settings {
 	lastChangelogVersion?: string;
 	defaultProvider?: string;
@@ -134,6 +146,7 @@ export interface Settings {
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
 	tuiMode?: TuiMode; // default: "regular"
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
+	harness?: HarnessSettings; // Global-only (harness phase 3); project files can never shadow it
 }
 
 function isMergeableObject(value: unknown): value is Record<string, unknown> {
@@ -162,6 +175,16 @@ function deepMergeObjects(base: Record<string, unknown>, overrides: Record<strin
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
 function deepMergeSettings(base: Settings, overrides: Settings): Settings {
 	return deepMergeObjects(base as Record<string, unknown>, overrides as Record<string, unknown>) as Settings;
+}
+
+// The effective settings view: Harness approval settings are
+// global-only by design, so a project settings.json can never shadow them.
+function mergedSettingsView(base: Settings, overrides: Settings): Settings {
+	const merged = deepMergeSettings(base, overrides);
+	if (merged.harness !== undefined) {
+		merged.harness = { ...(base.harness ?? {}) };
+	}
+	return merged;
 }
 
 function parseTimeoutSetting(value: unknown, settingName: string): number | undefined {
@@ -307,7 +330,7 @@ export class SettingsManager {
 		this.globalSettingsLoadError = globalLoadError;
 		this.projectSettingsLoadError = projectLoadError;
 		this.errors = [...initialErrors];
-		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+		this.settings = mergedSettingsView(this.globalSettings, this.projectSettings);
 	}
 
 	/** Create a SettingsManager that loads from files */
@@ -468,7 +491,7 @@ export class SettingsManager {
 		if (!trusted) {
 			this.projectSettings = {};
 			this.projectSettingsLoadError = null;
-			this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+			this.settings = mergedSettingsView(this.globalSettings, this.projectSettings);
 			return;
 		}
 
@@ -478,7 +501,7 @@ export class SettingsManager {
 		if (projectLoad.error) {
 			this.recordError("project", projectLoad.error);
 		}
-		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+		this.settings = mergedSettingsView(this.globalSettings, this.projectSettings);
 	}
 
 	async reload(): Promise<void> {
@@ -506,7 +529,7 @@ export class SettingsManager {
 			this.recordError("project", projectLoad.error);
 		}
 
-		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+		this.settings = mergedSettingsView(this.globalSettings, this.projectSettings);
 	}
 
 	/** Apply additional overrides on top of current settings */
@@ -612,7 +635,7 @@ export class SettingsManager {
 	}
 
 	private save(): void {
-		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+		this.settings = mergedSettingsView(this.globalSettings, this.projectSettings);
 
 		if (this.globalSettingsLoadError) {
 			return;
@@ -630,7 +653,7 @@ export class SettingsManager {
 	private saveProjectSettings(settings: Settings): void {
 		this.assertProjectTrustedForWrite();
 		this.projectSettings = structuredClone(settings);
-		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+		this.settings = mergedSettingsView(this.globalSettings, this.projectSettings);
 
 		if (this.projectSettingsLoadError) {
 			return;
@@ -702,6 +725,20 @@ export class SettingsManager {
 		this.globalSettings.defaultModel = modelId;
 		this.markModified("defaultProvider");
 		this.markModified("defaultModel");
+		this.save();
+	}
+
+	// Harness approval mode is a global-only block: the setters
+	// only touch the global file and mergedSettingsView keeps project
+	// overrides out of the effective view. session_skip is session memory
+	// only, so a persisted value of it means nothing and falls back to ask.
+	getApprovalMode(): ApprovalMode {
+		return this.settings.harness?.approvalMode === "always_skip" ? "always_skip" : "ask";
+	}
+
+	setApprovalMode(mode: ApprovalMode): void {
+		this.globalSettings.harness = { ...(this.globalSettings.harness ?? {}), approvalMode: mode };
+		this.markModified("harness");
 		this.save();
 	}
 

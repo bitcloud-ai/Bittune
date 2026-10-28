@@ -6,16 +6,15 @@
 
 ## What Bittune is
 
-Bittune is an **inference engineering agent** that runs on your own GPU machine: you state the goal in natural language, and it handles environment inspection, model selection, vLLM/SGLang service deployment, performance benchmarking, and parameter tuning — recording every conclusion as auditable execution evidence.
+Bittune is a **local inference-serving Harness** that runs on your own GPU machine. The Agent investigates the host freely with generic tools (read/bash/edit/write) and uses 10 managed tools for environment snapshots, deployment plans, managed services, normalized benchmarks, comparisons, and traceable reports. Every step leaves auditable execution evidence.
 
 ```text
-You say: "Deploy Qwen on this RTX 5090 with vLLM and maximize throughput"
-Bittune: inspects GPU/Docker environment → discovers local models → deploys vLLM (managed)
-        → benchmarks via EvalScope → measures candidate configurations one by one
-        → reports the best configuration with a before/after comparison
+You say: "Deploy Qwen with vLLM on this machine and benchmark the throughput"
+Bittune: inspect_environment → plan_deployment (validate → confirm → freeze)
+        → deploy_service → benchmark_service (EvalScope) → compare_results → write_report
 ```
 
-Every performance conclusion comes from **real deployments and real benchmarks**, bound to environment fingerprints and configuration hashes; failures are recorded too, and variance is reported honestly.
+Every measured number comes from a **real Core-managed benchmark**, bound to a hardware snapshot and a workload hash; failures, cancellations, and no-gain outcomes are recorded and reported just as honestly.
 
 ## Product landscape
 
@@ -28,13 +27,18 @@ Core principle: **the cloud provides facts, the client executes for real.** Ever
 
 ## What it does
 
-- Reads GPU, Linux, Docker, and NVIDIA runtime state; discovers local model caches and existing services.
-- Creates and manages vLLM or SGLang services with restricted configurations, performing start, readiness check, endpoint probing, log reading, and stop as independently auditable operations.
-- Runs standardized benchmarks against managed services via EvalScope `perf`, persisting raw output as Run Records and Artifacts.
-- Derives a `MeasuredOperatingPoint` from repeated measurements against the same deployment, environment, workload, and configuration — reporting the operating range and capacity boundary.
-- Records tuning and capacity-exploration experiments with repeatable baselines, candidate comparison, and traceable conclusions.
-- Exposes managed operations through a static Domain Tool Registry; the Agent selects tools per conversational goal.
-- Optionally connects to administrator-configured read-only MCP servers; actual environment facts and execution evidence always come from local tools.
+- 4 generic tools (read/bash/edit/write) plus 10 managed tools; the Agent decides what to investigate and which path to try, the Harness executes, validates, and keeps receipts.
+- `inspect_environment` produces an immutable HardwareSnapshot (GPUs, driver, Docker, topology) in one shot.
+- `plan_deployment`: draft → deterministic validation → user confirmation → freeze into an immutable snapshot; validation checks the exact model revision, local image digest, model weights, GPU count, and the host image policy.
+- Existing flat Transformers model directories can be mounted read-only; Core derives their content identity without copying weights into a cache layout.
+- `deploy_service`: managed containers come only from frozen plans (`--pull=never`, offline env vars, ownership labels + local record double-proof); containers started by Bash are never treated as managed and are never stopped or recovered.
+- `benchmark_service`: EvalScope `perf` against ready managed services with a fixed argv profile; TTFT/TPOT/ITL/latency/RPS/TPS/success rate are normalized and raw JSON, logs, and EvalScope request metrics are kept as Artifacts, with request, success/failure, and actual token-shape checks. Fixed synthetic workloads require `/v1/completions` token-ID support.
+- `benchmark_suite`: budgeted measurements from versioned profiles, separating measurement completeness, per-request goodput, and aggregate SLO verdicts. Fair-comparison claims require cache control and actual input identity. See the [measurement contract](guide/benchmark-contract.md) for fields, units, and history compatibility.
+- `export_deliverable`: select an existing suite or specific benchmarks to export consistent XLSX and evidence ZIP files, including actual Artifact bytes and hash manifests, without measuring again.
+- `compare_results`: comparability (model, environment, workload hash) is verified before any deterministic delta conclusion; record it as an Experiment when needed.
+- `write_report`: every measured number traces back to its BenchmarkResult and raw Artifact; estimates may only appear in explicitly labelled narrative.
+- Optional [specified-resource tasks](guide/task-scope-and-reporting.md) reject broad enumeration before execution. Compact suite selections and report inheritance let Core verify reference coverage without copying large arrays through the Agent.
+- All Runs, Artifacts, facts, and reports live under `~/.bittune/core` (SQLite + files), written exclusively by the local Python Core — the Agent session can never write them directly.
 
 ## Quick start
 
@@ -46,7 +50,7 @@ cd bittune-<version>-linux-x86_64
 sudo ./install.sh
 ```
 
-The installer detects online or offline package contents automatically, installs the required Node.js and Bittune components, and creates `/usr/local/bin/bittune`. The offline package uses the same `sudo ./install.sh` command and never contacts the network. Online installs also prepare the optional fixed-version Python measurement tools. Bittune installs and runs as root: run `bittune` in a root session after installation; to run as a regular user instead, add that user to the `docker` group.
+The installer detects online or offline package contents automatically, installs Node.js, Bittune, and the local Python Core, and creates `/usr/local/bin/bittune`. The offline package uses the same `sudo ./install.sh` command and never contacts the network — the Python Core installs offline from a prebuilt wheel. Online installs additionally prepare the optional fixed-version EvalScope measurement tools. Bittune installs and runs as root: run `bittune` in a root session after installation; to run as a regular user instead, add that user to the `docker` group.
 
 Configure an OpenAI-compatible Agent LLM endpoint, then launch:
 
@@ -57,7 +61,7 @@ bittune doctor
 bittune
 ```
 
-For full prerequisites, offline installation, and configuration details see [Quick Start](guide/getting-started.md). The online installer installs fixed-version EvalScope and Hugging Face CLI tooling into `/opt/bittune/py`, and the Bittune launcher uses this environment automatically at runtime; GPU drivers, Docker, NVIDIA Container Toolkit, runtime images, and models are prepared by the administrator as needed — run `bittune doctor` to inspect each item.
+For full prerequisites, offline installation, and configuration details see [Quick Start](guide/getting-started.md). The installer places the Python Core into the `/opt/bittune/py` virtualenv and each session runs `python -m bittune_core` from it (`bittune doctor` self-checks this); GPU drivers, Docker, NVIDIA Container Toolkit, runtime images, and models are prepared by the administrator as needed.
 
 ## Requirements
 
@@ -68,10 +72,14 @@ For full prerequisites, offline installation, and configuration details see [Qui
 
 ## Running from source
 
-Source development requires Node.js >= 22.19.0 (release packages ship their own pinned Node.js, independent of your system installation):
+Source development requires Python >= 3.10, the OpenSSL CLI, and Node.js >= 22.19.0 (release packages ship their own pinned Node.js, independent of your system installation):
 
 ```bash
-npm install
+npm ci
+python3 -m venv .venv
+.venv/bin/python -m pip install -e ./packages/bittune-core
+export BITTUNE_TEST_PYTHON="$PWD/.venv/bin/python"
+export BITTUNE_CORE_PYTHON="$PWD/.venv/bin/python"
 npm run check
 npm test
 npm run bittune
@@ -87,7 +95,7 @@ npm run test:gpu-acceptance
 ## Documentation
 
 - [Quick Start](guide/getting-started.md): installation, first configuration, and session resume.
-- [Operations Guide](guide/operations.md): working directory, provider prerequisites, evidence storage, and MCP operations.
+- [Operations Guide](guide/operations.md): working directories, prerequisites, evidence storage, and Core operations.
 - [Documentation Index](guide/README.md): navigation and support scope.
 - [Roadmap](ROADMAP.en.md): product landscape and P1–P4 direction.
 - User guides are currently published in Simplified Chinese; English versions are planned.

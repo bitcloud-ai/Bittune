@@ -23,6 +23,7 @@ import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { renderToolPath, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
+import { GENERIC_TOOL_LABELS } from "../../harness/tui/copy.ts";
 
 type EditPreview = EditDiffResult | EditDiffError;
 
@@ -204,7 +205,8 @@ function getRenderablePreviewInput(args: RenderableEditArgs | undefined): { path
 
 function formatEditCall(args: RenderableEditArgs | undefined, theme: Theme, cwd: string): string {
 	const pathDisplay = renderToolPath(str(args?.file_path ?? args?.path), theme, cwd);
-	return `${theme.fg("toolTitle", theme.bold("edit"))} ${pathDisplay}`;
+		// BITTUNE-FORK: visible card title is the Chinese product label.
+		return `${theme.fg("toolTitle", theme.bold(GENERIC_TOOL_LABELS.edit))} ${pathDisplay}`;
 }
 
 function formatEditResult(
@@ -300,8 +302,8 @@ export function createEditToolDefinition(
 ): ToolDefinition<typeof editSchema, EditToolDetails | undefined, EditRenderState> {
 	const ops = options?.operations ?? defaultEditOperations;
 	return {
-		name: "edit",
-		label: "edit",
+			name: "edit",
+			label: GENERIC_TOOL_LABELS.edit, // BITTUNE-FORK: Chinese product card title.
 		description:
 			"Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.",
 		promptSnippet: editToolSystemPromptContribution.snippet,

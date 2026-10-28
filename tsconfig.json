@@ -12,7 +12,6 @@
     "types": ["node"]
   },
   "include": [
-    "packages/bittune-capabilities/**/*.ts",
     "packages/bittune-runtime/src/bittune.ts",
     "packages/bittune-runtime/src/shims.d.ts",
     "tests/**/*.test.ts"

@@ -21,23 +21,23 @@ jobs:
           node-version: 22.19.0
           cache: npm
 
-      - name: Install dependencies
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.11"
+
+      - name: Install Node dependencies
         run: npm ci
 
-      - name: Type check
-        run: npm run check
+      - name: Install Python Core
+        run: python -m pip install ./packages/bittune-core
 
-      - name: Build shell
-        run: npm run build:shell
-
-      - name: Test
-        run: npm test
-
-      - name: Verify tag version
-        run: npm run check:release-version
-
-      - name: Package installer
+      - name: Check and package installer
         run: npm run package:agent
+        env:
+          BITTUNE_CORE_PYTHON: python
+          BITTUNE_TEST_PYTHON: python
+          BITTUNE_PYTHON: python
 
       - name: Validate installer entrypoints
         run: |

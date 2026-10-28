@@ -1,0 +1,30 @@
+{
+  "registry": {
+    "schema_version": 1,
+    "profile_id": "custom",
+    "concurrency_mode": "ladder",
+    "input_bucket": "8193-32768",
+    "scenarios": [
+      {
+        "scenario_id": "short-chat",
+        "input_tokens": 1024,
+        "output_tokens": 256,
+        "concurrency": [1],
+        "request_count": 1,
+        "closed_loop": true,
+        "stream": true,
+        "ignore_eos": true,
+        "temperature": 0,
+        "seed": 0,
+        "warmup_requests": 1,
+        "request_timeout_seconds": 120
+      }
+    ]
+  },
+  "acceptance": {
+    "schema_version": 1,
+    "success_rate_min": 0.99,
+    "p99_e2e_latency_ms_max": 30000,
+    "p99_ttft_ms_max": 5000
+  }
+}

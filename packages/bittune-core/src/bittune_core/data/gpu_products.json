@@ -1,0 +1,20 @@
+{
+  "exact": {
+    "NVIDIA GeForce RTX 4090": "RTX 4090",
+    "NVIDIA GeForce RTX 5090": "RTX 5090",
+    "NVIDIA L40S": "L40S",
+    "NVIDIA L40": "L40",
+    "NVIDIA A100-SXM4-80GB": "A100",
+    "NVIDIA A100 80GB PCIe": "A100",
+    "NVIDIA H100 80GB HBM3": "H100",
+    "NVIDIA H100 PCIe": "H100"
+  },
+  "contains": [
+    {"needle": "RTX 4090", "product": "RTX 4090"},
+    {"needle": "RTX 5090", "product": "RTX 5090"},
+    {"needle": "H100", "product": "H100"},
+    {"needle": "A100", "product": "A100"},
+    {"needle": "L40S", "product": "L40S"},
+    {"needle": "L40", "product": "L40"}
+  ]
+}

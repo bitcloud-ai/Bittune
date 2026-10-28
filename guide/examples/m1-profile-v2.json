@@ -1,0 +1,37 @@
+{
+  "registry": {
+    "schema_version": 2,
+    "profile_id": "m1-contract-acceptance",
+    "concurrency_mode": "ladder",
+    "budget": {
+      "max_points": 3,
+      "max_requests": 12,
+      "max_duration_seconds": 180,
+      "max_artifact_bytes": 4194304
+    },
+    "scenarios": [{
+      "scenario_id": "m1-synthetic",
+      "scenario": "chat",
+      "input_tokens": 128,
+      "output_tokens": 32,
+      "concurrency": [1, 2],
+      "request_count": 4,
+      "closed_loop": true,
+      "stream": true,
+      "ignore_eos": true,
+      "temperature": 0.7,
+      "top_p": 0.9,
+      "seed": 1234,
+      "warmup_requests": 1,
+      "request_timeout_seconds": 60
+    }]
+  },
+  "acceptance": {
+    "schema_version": 2,
+    "success_rate_min": 0.99,
+    "latency_comparison": "raw_ms",
+    "request_limits_ms": {"e2e": 5000, "ttft": 1000, "tpot": 50, "itl": 100},
+    "p99_limits_ms": {"e2e": 5000, "ttft": 1000, "tpot": 50, "itl": 100},
+    "stop_policy": {"throughput_drop_ratio": 0.2}
+  }
+}

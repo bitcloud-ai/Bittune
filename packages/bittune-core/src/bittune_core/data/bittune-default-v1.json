@@ -1,0 +1,71 @@
+{
+  "registry": {
+    "schema_version": 1,
+    "profile_id": "bittune-default-v1",
+    "concurrency_mode": "ladder",
+    "scenarios": [
+      {
+        "scenario_id": "short-chat",
+        "input_tokens": 1024,
+        "output_tokens": 256,
+        "concurrency": [1, 4, 8],
+        "request_count": 8,
+        "closed_loop": true,
+        "stream": true,
+        "ignore_eos": true,
+        "temperature": 0,
+        "seed": 0,
+        "warmup_requests": 1,
+        "request_timeout_seconds": 120
+      },
+      {
+        "scenario_id": "short-rag",
+        "input_tokens": 16384,
+        "output_tokens": 256,
+        "concurrency": [1, 2],
+        "request_count": 4,
+        "closed_loop": true,
+        "stream": true,
+        "ignore_eos": true,
+        "temperature": 0,
+        "seed": 0,
+        "warmup_requests": 1,
+        "request_timeout_seconds": 120
+      },
+      {
+        "scenario_id": "short-batch",
+        "input_tokens": 512,
+        "output_tokens": 4096,
+        "concurrency": [1, 4],
+        "request_count": 4,
+        "closed_loop": true,
+        "stream": true,
+        "ignore_eos": true,
+        "temperature": 0,
+        "seed": 0,
+        "warmup_requests": 1,
+        "request_timeout_seconds": 120
+      },
+      {
+        "scenario_id": "short-code",
+        "input_tokens": 2048,
+        "output_tokens": 512,
+        "concurrency": [1, 2],
+        "request_count": 4,
+        "closed_loop": true,
+        "stream": true,
+        "ignore_eos": true,
+        "temperature": 0,
+        "seed": 0,
+        "warmup_requests": 1,
+        "request_timeout_seconds": 120
+      }
+    ]
+  },
+  "acceptance": {
+    "schema_version": 1,
+    "success_rate_min": 0.99,
+    "p99_e2e_latency_ms_max": 30000,
+    "p99_ttft_ms_max": 5000
+  }
+}

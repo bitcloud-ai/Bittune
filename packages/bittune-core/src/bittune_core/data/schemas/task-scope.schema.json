@@ -1,0 +1,31 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "type":"object","additionalProperties":false,
+  "required":["schema_version","allow_execution","plan_ids","service_instance_ids","record_ids","read_paths"],
+  "properties":{
+    "schema_version":{"const":1},"allow_execution":{"type":"boolean"},
+    "preparation_commands":{"type":"array","maxItems":8,"uniqueItems":true,"items":{"type":"string","minLength":1}},
+    "runtime_specs":{"type":"array","maxItems":4,"uniqueItems":true,"items":{
+      "type":"object","additionalProperties":false,"required":["schema_version","runtime_kind","image_repository","image_digest"],
+      "properties":{
+        "schema_version":{"const":1},"runtime_kind":{"enum":["vllm","sglang"]},
+        "image_repository":{"enum":["vllm/vllm-openai","lmsysorg/sglang"]},
+        "image_digest":{"type":"string","pattern":"^sha256:[a-f0-9]{64}$"},
+        "runtime_major":{"type":"string","pattern":"^[0-9]{1,16}$"}
+      }
+    }},
+    "experiment_budget":{
+      "type":"object","additionalProperties":false,
+      "required":["profile_hash","max_suite_calls","max_points","max_requests"],
+      "properties":{
+        "profile_hash":{"type":"string","pattern":"^sha256:[a-f0-9]{64}$"},
+        "max_suite_calls":{"type":"integer","minimum":1},
+        "max_points":{"type":"integer","minimum":1},
+        "max_requests":{"type":"integer","minimum":1}
+      }
+    },
+    "plan_ids":{"$ref":"#/$defs/ids"},"service_instance_ids":{"$ref":"#/$defs/ids"},"record_ids":{"$ref":"#/$defs/ids"},
+    "read_paths":{"type":"array","uniqueItems":true,"maxItems":256,"items":{"type":"string","pattern":"^/","minLength":2}}
+  },
+  "$defs":{"ids":{"type":"array","uniqueItems":true,"maxItems":4096,"items":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9._-]+$"}}}
+}

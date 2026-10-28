@@ -1,5 +1,22 @@
 # Third-party notices
 
+## Distributed Python Core dependencies
+
+The Core wheelhouse includes the following runtime packages. Versions are
+fixed in `install/core-requirements.txt`; each wheel retains its upstream
+license and copyright files. EvalScope is a separate optional installation.
+
+| Package | Version | License |
+|---|---|---|
+| jsonschema | 4.23.0 | MIT |
+| openpyxl | 3.1.5 | MIT |
+| attrs | 26.1.0 | MIT |
+| jsonschema-specifications | 2025.9.1 | MIT |
+| referencing | 0.37.0 | MIT |
+| rpds-py | 0.30.0 | MIT |
+| et-xmlfile | 2.0.0 | MIT |
+| typing-extensions | 4.16.0 | PSF-2.0 |
+
 ## Embedded Agent Runtime
 
 Portions of the embedded Agent Runtime are Copyright (c) 2025 Mario Zechner
@@ -51,7 +68,6 @@ with every release package.
 | `@modelcontextprotocol/client` | 2.0.0 | MIT | github.com/modelcontextprotocol/typescript-sdk |
 | `@modelcontextprotocol/core` | 2.0.0 | MIT | github.com/modelcontextprotocol/typescript-sdk |
 | `@silvia-odwyer/photon-node` | 0.3.4 | Apache-2.0 | github.com/silvia-odwyer/photon |
-| `ajv` | 8.20.0 | MIT | github.com/ajv-validator/ajv |
 | `chalk` | 5.6.2 | MIT | github.com/chalk/chalk |
 | `cross-spawn` | 7.0.6 | MIT | github.com/moxystudio/node-cross-spawn |
 | `diff` | 8.0.4 | BSD-3-Clause | github.com/kpdecker/jsdiff |

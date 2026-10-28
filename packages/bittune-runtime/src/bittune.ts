@@ -1,16 +1,12 @@
-import { randomUUID } from "node:crypto";
+import { existsSync, realpathSync } from "node:fs";
 import { chmod, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createBittuneExtension } from "../../bittune-capabilities/src/index.ts";
-import { createMcpTools } from "../../bittune-capabilities/src/mcp/tools.ts";
-import { RunRecorder } from "../../bittune-capabilities/src/shared/run-recorder.ts";
-import { namespaceForWorkspace } from "../../bittune-capabilities/src/shared/state-store.ts";
-import { StateStore } from "../../bittune-capabilities/src/shared/state-store.ts";
-import { HISTORICAL_EVIDENCE_TOOL_NAMES } from "../../bittune-capabilities/src/shared/capability-catalog.ts";
-import { BITTUNE_SYSTEM_PROMPT } from "../../bittune-capabilities/src/shared/system-prompt.ts";
-import { createToolRegistry } from "../../bittune-capabilities/src/tool-registry.ts";
+import { CoreClient, probeCore } from "./harness/core-client.ts";
+import { createHarnessExtension } from "./harness/extension.ts";
+import { MANAGED_TOOL_NAMES } from "./harness/managed-tools.ts";
+import { BITTUNE_SYSTEM_PROMPT } from "./harness/system-prompt.ts";
 import { createAgentSessionRuntime, type CreateAgentSessionRuntimeFactory } from "./core/agent-session-runtime.ts";
 import type { AgentSessionRuntimeDiagnostic, AgentSessionServices } from "./core/agent-session-services.ts";
 import { createAgentSession } from "./core/sdk.ts";
@@ -18,31 +14,43 @@ import { ModelRuntime } from "./core/model-runtime.ts";
 import { DefaultResourceLoader } from "./core/resource-loader.ts";
 import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
-import { parseBittuneCliArguments, type BittuneConfigureOptions, type BittuneMcpCommand } from "./cli/bittune-args.ts";
+import { parseBittuneCliArguments, type BittuneConfigureOptions } from "./cli/bittune-args.ts";
 import { InteractiveMode } from "./modes/interactive/interactive-mode.ts";
-import { VERSION } from "./config.ts";
-import { loadMcpConfiguration, publicMcpServerConfig } from "./core/mcp/config.ts";
-import { discoverConfiguredMcpTools } from "./core/mcp/discovery.ts";
+import { getPackageDir, VERSION } from "./config.ts";
 
 export interface BittunePaths {
 	root: string;
 	agent: string;
 	sessions: string;
 	state: string;
+	/** Python Core home (SQLite + artifacts + staging); default ~/.bittune/core. */
+	core: string;
 	logs: string;
 }
 
-export interface CreateBittuneRuntimeOptions {
-  cwd?: string;
-  paths?: Partial<BittunePaths>;
-  sessionId?: string;
-  /** Starts a new namespace that cannot recover prior Bittune evidence. */
-  freshExperiment?: boolean;
-}
+	export interface CreateBittuneRuntimeOptions {
+	  cwd?: string;
+	  paths?: Partial<BittunePaths>;
+	  sessionId?: string;
+	}
 
 const AGENT_CONFIG_MARKER = "bittune-runtime.json";
 const AGENT_CONFIG_SCHEMA_VERSION = 1;
-const SESSION_BUILTIN_TOOL_NAMES = ["read", "bash"];
+const SESSION_BUILTIN_TOOL_NAMES = ["read", "bash", "edit", "write"];
+
+/** Product Skill tree: next to src in dev, next to dist/agent payload after install. Never ~/.bittune/agent/skills. */
+export function resolveProductSkillsDir(): string {
+	const here = dirname(fileURLToPath(import.meta.url));
+	const nextToModule = join(here, "..", "skills");
+	if (existsSync(nextToModule)) return nextToModule;
+	const nextToJs = join(here, "skills");
+	if (existsSync(nextToJs)) return nextToJs;
+	const fromPackage = join(getPackageDir(), "skills");
+	if (existsSync(fromPackage)) return fromPackage;
+	const fromRepo = join(getPackageDir(), "packages", "bittune-runtime", "skills");
+	if (existsSync(fromRepo)) return fromRepo;
+	return nextToModule;
+}
 
 function getEnvironmentPath(name: string): string | undefined {
 	const value = process.env[name]?.trim();
@@ -62,12 +70,13 @@ export function resolveBittunePaths(overrides: Partial<BittunePaths> = {}): Bitt
 		sessions:
 			overrides.sessions ?? getEnvironmentPath("BITTUNE_SESSION_DIR") ?? join(agent, "sessions"),
 		state: overrides.state ?? getEnvironmentPath("BITTUNE_STATE_DIR") ?? join(root, "state"),
+		core: overrides.core ?? getEnvironmentPath("BITTUNE_CORE_HOME") ?? join(root, "core"),
 		logs: overrides.logs ?? getEnvironmentPath("BITTUNE_LOG_DIR") ?? join(root, "logs"),
 	};
 }
 
 async function ensureDirectories(paths: BittunePaths): Promise<void> {
-	await Promise.all([paths.agent, paths.sessions, paths.state, paths.logs].map((path) => mkdir(path, { recursive: true })));
+	await Promise.all([paths.agent, paths.sessions, paths.state, paths.core, paths.logs].map((path) => mkdir(path, { recursive: true })));
 }
 
 async function isBittuneAgentConfigurationInitialized(agentDir: string): Promise<boolean> {
@@ -97,98 +106,117 @@ async function assertBittuneAgentConfigurationInitialized(agentDir: string): Pro
 	);
 }
 
-function createRuntimeFactory(paths: BittunePaths, options: { namespaceId?: string; freshExperiment?: boolean } = {}): CreateAgentSessionRuntimeFactory {
-  return async ({ cwd, agentDir, sessionManager, sessionStartEvent }) => {
-    const namespaceId = options.namespaceId ?? namespaceForWorkspace(cwd);
-    const domainTools = createToolRegistry(paths.state, namespaceId);
+function createRuntimeFactory(paths: BittunePaths): CreateAgentSessionRuntimeFactory {
+	return async ({ cwd, agentDir, sessionManager, sessionStartEvent }) => {
 		const diagnostics: AgentSessionRuntimeDiagnostic[] = [];
-		let mcpTools: ReturnType<typeof createMcpTools>["tools"] = [];
-		let closeMcpTools: (() => Promise<void>) | undefined;
-		try {
-			const mcpConfiguration = await loadMcpConfiguration(join(paths.root, "mcp.json"));
-			const discoveredMcp = await discoverConfiguredMcpTools(mcpConfiguration);
-			for (const diagnostic of discoveredMcp.diagnostics) {
-				diagnostics.push({ type: "warning", message: `MCP server ${diagnostic.serverName} unavailable (${diagnostic.code}): ${diagnostic.message}` });
-			}
-			const externalTools = discoveredMcp.servers.flatMap((server) => server.tools);
-			const bridged = createMcpTools(new RunRecorder(new StateStore(paths.state, namespaceId)), externalTools);
-			mcpTools = bridged.tools;
-			closeMcpTools = discoveredMcp.close;
-			for (const diagnostic of bridged.diagnostics) diagnostics.push({ type: "warning", message: `MCP bridge: ${diagnostic}` });
-		} catch (error) {
-			diagnostics.push({ type: "warning", message: `MCP configuration unavailable: ${error instanceof Error ? error.message : String(error)}` });
-		}
-    const availableTools = [
-      ...new Set([...SESSION_BUILTIN_TOOL_NAMES, ...domainTools.map((tool) => tool.name), ...mcpTools.map((tool) => tool.name)]),
-    ].filter((name) => !options.freshExperiment || !HISTORICAL_EVIDENCE_TOOL_NAMES.includes(name as typeof HISTORICAL_EVIDENCE_TOOL_NAMES[number]));
-		const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
-		const modelRuntime = await ModelRuntime.create({
-			authPath: join(agentDir, "auth.json"),
-			modelsPath: join(agentDir, "models.json"),
-			refreshOnCreate: false,
-			allowModelNetwork: false,
-		});
-		await modelRuntime.refresh({ allowNetwork: false });
-		const providerId = settingsManager.getDefaultProvider();
-		const modelId = settingsManager.getDefaultModel();
-		const model = providerId && modelId ? modelRuntime.getModel(providerId, modelId) : undefined;
-		if (!model) {
-			throw new Error("No Bittune Agent model is selected. Run `bittune configure` before starting a session.");
-		}
-
-		const resourceLoader = new DefaultResourceLoader({
-			cwd,
-			agentDir,
-			settingsManager,
-			extensionFactories: [
-				{
-					name: "bittune",
-          factory: createBittuneExtension({ stateRoot: paths.state, namespaceId, externalTools: mcpTools, closeExternalTools: closeMcpTools, freshExperiment: options.freshExperiment }),
-					hidden: true,
-				},
-			],
-			noExtensions: true,
-			noSkills: true,
-			noPromptTemplates: true,
-			noThemes: true,
-			noContextFiles: true,
-			staticOnly: true,
-			systemPrompt: BITTUNE_SYSTEM_PROMPT,
-		});
-		await resourceLoader.reload();
-
-		const result = await createAgentSession({
-			cwd,
-			agentDir,
-			modelRuntime,
-			resourceLoader,
-			settingsManager,
-			sessionManager,
-			model,
-			// The static catalog is the trust boundary and all trusted domain tools
-			// are available to the conversational Agent from the first turn.
-			availableTools,
-			tools: availableTools,
-			...(sessionStartEvent ? { sessionStartEvent } : {}),
-		});
-		const services: AgentSessionServices = { cwd, agentDir, modelRuntime, settingsManager, resourceLoader, diagnostics };
-		return {
-			session: result.session,
-			extensionsResult: result.extensionsResult,
-			services,
-			diagnostics,
-			...(result.modelFallbackMessage ? { modelFallbackMessage: result.modelFallbackMessage } : {}),
+		// The Core is session-scoped: same lifetime as this Runtime session,
+		// no daemon, no listening port. It must be able to start before any
+		// managed tool may exist in the session.
+		const coreClient = await CoreClient.start({ coreHome: paths.core });
+		let coreActive = true;
+		const closeCore = async (): Promise<void> => {
+			if (!coreActive) return;
+			coreActive = false;
+			await coreClient.stop();
 		};
+		try {
+		const taskScope = process.env.BITTUNE_TASK_SCOPE_FILE
+            ? (await coreClient.request("task_scope_status", {}, { sessionId: sessionManager.getSessionId() ?? "external" }) as { scope: import("./harness/task-scope.ts").TaskScope }).scope
+            : null;
+			const availableTools = [...SESSION_BUILTIN_TOOL_NAMES, ...MANAGED_TOOL_NAMES, "investigate"];
+const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
+				const modelRuntime = await ModelRuntime.create({
+				authPath: join(agentDir, "auth.json"),
+				modelsPath: join(agentDir, "models.json"),
+				refreshOnCreate: false,
+				allowModelNetwork: false,
+			});
+			await modelRuntime.refresh({ allowNetwork: false });
+			const providerId = settingsManager.getDefaultProvider();
+			const modelId = settingsManager.getDefaultModel();
+			const model = providerId && modelId ? modelRuntime.getModel(providerId, modelId) : undefined;
+			if (!model) {
+				throw new Error("No Bittune Agent model is selected. Run `bittune configure` before starting a session.");
+			}
+
+			const resourceLoader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				settingsManager,
+				extensionFactories: [
+					{
+						name: "bittune",
+							factory: createHarnessExtension({
+								// paths.core holds SQLite + artifacts
+								// and staging; it is listed explicitly on top of
+								// the umbrella root so the deny list never
+								// depends on tree shape.
+	protectedRoots: [paths.root, paths.core],
+									cwd,
+									coreHome: paths.core,
+									client: () => (coreActive ? coreClient : undefined),
+									taskScope: taskScope ?? undefined,
+								closeClient: closeCore,
+									// The approval preference is global-only: settings
+									// never let a project file shadow it, and session
+									// skip lives inside the extension's memory.
+									approval: {
+										get: () => settingsManager.getApprovalMode(),
+										set: (mode) => settingsManager.setApprovalMode(mode),
+									},
+										quietStartup: settingsManager.getQuietStartup(),
+										settingsManager,
+										modelRuntime,
+										agentDir,
+								}),
+							hidden: true,
+						},
+					],
+					noExtensions: true,
+					noSkills: true,
+					noPromptTemplates: true,
+					noThemes: true,
+					noContextFiles: true,
+					staticOnly: true,
+					additionalSkillPaths: [resolveProductSkillsDir()],
+					systemPrompt: BITTUNE_SYSTEM_PROMPT + (taskScope ? `\n指定资源任务已启用（${taskScope.scope_hash}）。Core固定计划/服务/记录ID范围；inspect_records省略id时可检索授权集合内的事实（deployment_plan、service_instance、suite_result、benchmark_result、experiment、report等），支持各类型已有过滤字段；不会返回范围外记录。run/artifact仍需具体授权ID，不做运行时全局枚举。通用工具结果末尾的Bittune evidence提供已保存的run_id/artifact_refs，可直接作为报告来源。只读文件：${JSON.stringify(taskScope.read_paths)}。仅允许以下Bash原样查询：${JSON.stringify(taskScope.inventory_commands)}。不调用investigate。allow_execution=${taskScope.allow_execution}。报告用suite_selections覆盖全部点，修订用based_on_report_id保留全部引用。` : ""),
+				});
+			await resourceLoader.reload();
+
+			const result = await createAgentSession({
+				cwd,
+				agentDir,
+				modelRuntime,
+				resourceLoader,
+				settingsManager,
+				sessionManager,
+				model,
+				// The static catalog is the trust boundary: 4 generic tools, 8 managed
+				// Core tools, available from the first turn.
+				availableTools,
+				tools: availableTools,
+				...(sessionStartEvent ? { sessionStartEvent } : {}),
+			});
+			const services: AgentSessionServices = { cwd, agentDir, modelRuntime, settingsManager, resourceLoader, diagnostics };
+			return {
+				session: result.session,
+				extensionsResult: result.extensionsResult,
+				services,
+				diagnostics,
+				...(result.modelFallbackMessage ? { modelFallbackMessage: result.modelFallbackMessage } : {}),
+			};
+		} catch (error) {
+			await closeCore();
+			throw error;
+		}
 	};
 }
 
 export async function createBittuneRuntime(options: CreateBittuneRuntimeOptions = {}) {
-  const cwd = resolve(options.cwd ?? process.cwd());
-  const paths = resolveBittunePaths(options.paths);
-  await ensureDirectories(paths);
-  await assertBittuneAgentConfigurationInitialized(paths.agent);
-  if (options.freshExperiment && options.sessionId) throw new Error("A fresh experiment cannot resume a persisted session.");
-	const namespaceId = options.freshExperiment ? `fresh-${randomUUID().replaceAll("-", "")}` : undefined;
+	const cwd = resolve(options.cwd ?? process.cwd());
+	const paths = resolveBittunePaths(options.paths);
+	await ensureDirectories(paths);
+	await assertBittuneAgentConfigurationInitialized(paths.agent);
 	let sessionManager: SessionManager;
 	if (options.sessionId) {
 		assertValidSessionId(options.sessionId);
@@ -198,23 +226,22 @@ export async function createBittuneRuntime(options: CreateBittuneRuntimeOptions 
 	} else {
 		sessionManager = SessionManager.create(cwd, paths.sessions);
 	}
-	const runtime = await createAgentSessionRuntime(createRuntimeFactory(paths, { namespaceId, freshExperiment: options.freshExperiment }), {
+	const runtime = await createAgentSessionRuntime(createRuntimeFactory(paths), {
 		cwd,
 		agentDir: paths.agent,
 		sessionManager,
 	});
-  return { runtime, paths, ...(namespaceId ? { namespaceId } : {}) };
+	return { runtime, paths };
 }
 
 function printHelp(): void {
 	console.log(`Bittune ${VERSION}
 
 Usage:
-  bittune [--fresh] [message]
+  bittune [message]
   bittune --session <id> [message]
   bittune install --package <tgz> | --offline <bundle-dir> [options]
   bittune configure --base-url <url> --model-id <id> [options]
-  bittune mcp <list|get|test> [name]
   bittune doctor
   bittune version
 
@@ -226,8 +253,7 @@ Commands:
               --yes          Non-interactive: accept the printed plan
               --json         Machine-readable plan/report
   configure   Configure the Bittune Agent LLM
-  mcp         Inspect or test globally configured MCP servers
-  doctor      Check Bittune runtime and local configuration
+  doctor      Check Bittune runtime, Python Core and local configuration
   version     Print the Bittune version
 
 Options:
@@ -236,17 +262,7 @@ Options:
   --provider-id <id>     Provider ID (default: bittune-agent)
   --api-key-env <name>   Environment variable containing the API key
   --session <id>         Resume a persisted Bittune session, optionally with an initial message
-  --fresh                Start an isolated experiment without historical evidence
   --help                 Show this help`);
-}
-
-function printMcpHelp(): void {
-	console.log(`Usage:
-  bittune mcp list
-  bittune mcp get <name>
-  bittune mcp test [name]
-
-MCP configuration is read only from $BITTUNE_HOME/mcp.json.`);
 }
 
 async function readJson(path: string): Promise<Record<string, unknown>> {
@@ -332,64 +348,40 @@ async function doctor(): Promise<void> {
 	console.log(`Bittune ${VERSION}`);
 	console.log(`Agent directory: ${paths.agent}`);
 	console.log(`State directory: ${paths.state}`);
+	console.log(`Core directory: ${paths.core}`);
 	console.log(`Agent model selection: ${model && providerId ? `${providerId}/${model.id}` : "missing"}`);
 	console.log(`Agent authentication: ${model && modelRuntime.hasConfiguredAuth(model.provider) ? "available" : "missing"}`);
-	if (!model || !modelRuntime.hasConfiguredAuth(model.provider)) process.exitCode = 1;
-	console.log("Domain prerequisites (needed only when the goal touches them):");
-	const { runChecks, renderCheckLines } = await import("./cli/install/checks.ts");
-	for (const line of renderCheckLines(await runChecks())) console.log(line);
-}
-
-async function runMcpCommand(command: BittuneMcpCommand): Promise<void> {
-	if (command.kind === "help") {
-		printMcpHelp();
-		return;
-	}
-	const paths = resolveBittunePaths();
-	await ensureDirectories(paths);
-	const configuration = await loadMcpConfiguration(join(paths.root, "mcp.json"));
-	if (command.kind === "list") {
-		if (configuration.servers.length === 0) {
-			console.log("No MCP servers are configured.");
-			return;
-		}
-		for (const server of configuration.servers) {
-			console.log(`${server.name}: ${server.enabled ? "enabled" : "disabled"} (${server.transport}, ${server.effect})`);
-			console.log(`  URL: ${server.url}`);
-			console.log(`  Allowed tools: ${server.allowTools.join(", ")}`);
-		}
-		return;
-	}
-	if (command.kind === "get") {
-		const server = configuration.servers.find((item) => item.name === command.name);
-		if (!server) throw new Error(`MCP server "${command.name}" is not configured.`);
-		console.log(JSON.stringify(publicMcpServerConfig(server), null, 2));
-		return;
-	}
-
-	const selected = command.name
-		? configuration.servers.filter((server) => server.name === command.name)
-		: configuration.servers;
-	if (selected.length === 0) throw new Error(`MCP server "${command.name}" is not configured.`);
-	const enabled = selected.filter((server) => server.enabled);
-	for (const server of selected.filter((server) => !server.enabled)) console.log(`${server.name}: disabled; skipped.`);
-	if (enabled.length === 0) return;
-	const result = await discoverConfiguredMcpTools({ servers: enabled });
-	try {
-		for (const server of result.servers) {
-			console.log(`${server.serverName}: connected`);
-			console.log(`  Discovered tools: ${server.discoveredToolNames.length ? server.discoveredToolNames.join(", ") : "none"}`);
-			console.log(`  Registered tools: ${server.tools.length ? server.tools.map((tool) => tool.remoteName).join(", ") : "none"}`);
-			if (server.missingAllowedToolNames.length > 0) console.log(`  Missing allowed tools: ${server.missingAllowedToolNames.join(", ")}`);
-		}
-		for (const diagnostic of result.diagnostics) {
-			console.error(`${diagnostic.serverName}: ${diagnostic.code}: ${diagnostic.message}`);
+	const approvalLabel = settingsManager.getApprovalMode() === "ask" ? "ask（逐次确认）" : `${settingsManager.getApprovalMode()}（普通确认跳过）`;
+	console.log(`Confirmation preference: ${approvalLabel}（用 /approval 修改；显式确认始终不跳过）`);
+	if (!model) {
+		console.log("Python Core: skipped (Agent model not initialized).");
+	} else {
+		try {
+			const coreProbe = probeCore({ coreHome: paths.core });
+			console.log(`Python Core: ${coreProbe.version} @ ${paths.core}`);
+		} catch (error) {
+			console.log(`Python Core: unavailable (${error instanceof Error ? error.message : String(error)})`);
 			process.exitCode = 1;
 		}
-	} finally {
-		await result.close();
 	}
-}
+	if (!model || !modelRuntime.hasConfiguredAuth(model.provider)) process.exitCode = 1;
+		console.log("Domain prerequisites (needed only when the goal touches them):");
+		const { runChecks, renderCheckLines } = await import("./cli/install/checks.ts");
+		for (const line of renderCheckLines(await runChecks())) console.log(line);
+		if (!model) return;
+		try {
+			const { runtime } = await createBittuneRuntime({ paths });
+			try {
+				const toolNames = runtime.session.agent.state.tools.map((tool) => tool.name);
+				console.log(`Runtime assembled: ${toolNames.length} tools (${toolNames.join(", ")})`);
+			} finally {
+				await runtime.dispose();
+			}
+		} catch (error) {
+			console.log(`Runtime assembled: failed (${error instanceof Error ? error.message : String(error)})`);
+			process.exitCode = 1;
+		}
+	}
 
 export async function runBittuneCli(argv: string[]): Promise<void> {
 	const invocation = parseBittuneCliArguments(argv);
@@ -405,10 +397,6 @@ export async function runBittuneCli(argv: string[]): Promise<void> {
 		await configure(invocation.options);
 		return;
 	}
-	if (invocation.kind === "mcp") {
-		await runMcpCommand(invocation.command);
-		return;
-	}
 	if (invocation.kind === "doctor") {
 		await doctor();
 		return;
@@ -419,13 +407,21 @@ export async function runBittuneCli(argv: string[]): Promise<void> {
 		return;
 	}
 
-	if (invocation.sessionId) assertValidSessionId(invocation.sessionId);
-  const { runtime } = await createBittuneRuntime({ ...(invocation.sessionId ? { sessionId: invocation.sessionId } : {}), ...(invocation.freshExperiment ? { freshExperiment: true } : {}) });
-	const mode = new InteractiveMode(runtime, invocation.message ? { initialMessage: invocation.message } : undefined);
-	await mode.run();
-}
+		if (invocation.sessionId) assertValidSessionId(invocation.sessionId);
+		const { runtime } = await createBittuneRuntime({ ...(invocation.sessionId ? { sessionId: invocation.sessionId } : {}) });
+		if (process.env.BITTUNE_HEADLESS === "1") {
+			try {
+				if (invocation.message) await runtime.session.prompt(invocation.message);
+			} finally {
+				await runtime.dispose();
+			}
+			return;
+		}
+		const mode = new InteractiveMode(runtime, invocation.message ? { initialMessage: invocation.message } : undefined);
+		await mode.run();
+	}
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && realpathSync(resolve(process.argv[1])) === fileURLToPath(import.meta.url)) {
 	await runBittuneCli(process.argv.slice(2)).catch((error: unknown) => {
 		const message = error instanceof Error ? error.message : String(error);
 		console.error(`bittune: ${message}`);

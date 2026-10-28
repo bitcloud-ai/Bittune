@@ -328,26 +328,13 @@ export {
 	type ProjectTrustStoreEntry,
 	type ProjectTrustUpdate,
 } from "./core/trust-manager.ts";
-// Main entry point
-export { type MainOptions, main } from "./main.ts";
-// Run modes for programmatic SDK usage
+// Run modes for programmatic SDK usage. The remote RPC Harness, the upstream
+// PI CLI entry (main.ts) and the print mode were removed with the Bittune
+// runtime fork; only the interactive mode is part of this build.
 export {
 	InteractiveMode,
 	type InteractiveModeOptions,
-	type JsonAgentSessionEvent,
-	type ModelInfo,
-	type PrintModeOptions,
-	RpcClient,
-	type RpcClientOptions,
-	type RpcCommand,
-	type RpcEventListener,
-	type RpcExtensionUIRequest,
-	type RpcExtensionUIResponse,
-	type RpcResponse,
-	type RpcSessionState,
-	runPrintMode,
-	runRpcMode,
-} from "./modes/index.ts";
+} from "./modes/interactive/interactive-mode.ts";
 // UI components for extensions
 export {
 	ArminComponent,

@@ -3,6 +3,7 @@ import type { ToolDefinition, ToolRenderContext } from "../../../core/extensions
 import { createAllToolDefinitions, type ToolName } from "../../../core/tools/index.ts";
 import { getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";
 import { convertToPng } from "../../../utils/image-convert.ts";
+import { toolLabel } from "../../../harness/tui/copy.ts";
 import { theme } from "../theme/theme.ts";
 
 export interface ToolExecutionOptions {
@@ -132,9 +133,11 @@ export class ToolExecutionComponent extends Container {
 		};
 	}
 
-	private createCallFallback(): Component {
-		return new Text(theme.fg("toolTitle", theme.bold(this.toolName)), 0, 0);
-	}
+		private createCallFallback(): Component {
+			// BITTUNE-FORK: card titles use product copy, not the internal tool name.
+			const action = typeof this.args?.action === "string" ? this.args.action : undefined;
+			return new Text(theme.fg("toolTitle", theme.bold(toolLabel(this.toolName, action))), 0, 0);
+		}
 
 	private createResultFallback(): Component | undefined {
 		const output = this.getTextOutput();

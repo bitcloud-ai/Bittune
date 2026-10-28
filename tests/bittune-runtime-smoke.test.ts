@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile, mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,10 +11,16 @@ import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "../pac
 import { BITTUNE_UNAVAILABLE_SLASH_COMMANDS, isBittuneUnavailableSlashCommand } from "../packages/bittune-runtime/src/core/bittune-product-policy.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../packages/bittune-runtime/src/core/slash-commands.ts";
 import { formatResumeCommand } from "../packages/bittune-runtime/src/modes/interactive/interactive-mode.ts";
-import { createToolRegistry } from "../packages/bittune-capabilities/src/tool-registry.ts";
+import { MANAGED_TOOL_NAMES } from "../packages/bittune-runtime/src/harness/managed-tools.ts";
+
+const HARNESS_TOOLS = ["read", "bash", "edit", "write", ...MANAGED_TOOL_NAMES];
 
 async function markBittuneAgentConfiguration(agent: string): Promise<void> {
 	await writeFile(join(agent, "bittune-runtime.json"), `${JSON.stringify({ schema_version: 1 })}\n`);
+}
+
+function hashOf(value: string): string {
+	return createHash("sha256").update(value).digest("hex");
 }
 
 test("Bittune CLI rejects unsupported and malformed options before starting a session", () => {
@@ -22,12 +29,7 @@ test("Bittune CLI rejects unsupported and malformed options before starting a se
 	});
 	assert.throws(() => parseBittuneCliArguments(["--session"]), /--session.*requires a value/i);
 	assert.throws(() => parseBittuneCliArguments(["--session", "one", "--session", "two"]), /may only be specified once/i);
-	assert.deepEqual(parseBittuneCliArguments(["--fresh", "run", "a", "new", "experiment"]), {
-		kind: "interactive",
-		freshExperiment: true,
-		message: "run a new experiment",
-	});
-	assert.throws(() => parseBittuneCliArguments(["--fresh", "--session", "session-123"]), /fresh experiment cannot resume/i);
+	assert.throws(() => parseBittuneCliArguments(["--fresh"]), /Unknown option/i);
 	assert.throws(() => parseBittuneCliArguments(["--session-dir", "/tmp/session"]), /Unknown option/i);
 	assert.throws(() => parseBittuneCliArguments(["--unknown"]), /Unknown option/i);
 	assert.throws(() => parseBittuneCliArguments(["configure", "--base-url", "http://example.test", "--unknown", "x"]), /Unknown option/i);
@@ -59,11 +61,12 @@ test("Bittune exposes only configure-based authentication and static model selec
 	assert.deepEqual(BITTUNE_UNAVAILABLE_SLASH_COMMANDS.slice(7, 10), ["/model", "/login", "/logout"]);
 });
 
-test("Bittune Runtime starts with every trusted domain tool available", async () => {
+	test("Bittune Runtime exposes 4 generic, 10 managed tools plus Runtime investigate", async () => {
 	const root = await mkdtemp(join(tmpdir(), "bittune-runtime-"));
 	const agent = join(root, "agent");
 	const sessions = join(agent, "sessions");
 	const state = join(root, "state");
+	const core = join(root, "core");
 	const logs = join(root, "logs");
 	const previousKey = process.env.BITTUNE_TEST_API_KEY;
 	process.env.BITTUNE_TEST_API_KEY = "test-key";
@@ -92,41 +95,76 @@ test("Bittune Runtime starts with every trusted domain tool available", async ()
 
 		const { runtime, paths } = await createBittuneRuntime({
 			cwd: root,
-			paths: { root, agent, sessions, state, logs },
+			paths: { root, agent, sessions, state, core, logs },
 		});
 		try {
-			assert.deepEqual(paths, { root, agent, sessions, state, logs });
-			const toolNames: string[] = runtime.session.agent.state.tools.map((tool) => tool.name);
-			const toolNameSet: Set<string> = new Set(toolNames);
-			assert.deepEqual(toolNames, ["read", "bash", ...createToolRegistry(state).map((tool) => tool.name)]);
-			assert.equal(toolNameSet.has("list_deployment_presets"), true);
-			assert.equal(runtime.session.getAllTools().some((tool) => tool.name === "list_deployment_presets"), true);
-			assert.equal(runtime.session.getAllTools().some((tool) => tool.name === "edit"), false);
-			assert.equal(runtime.session.getAllTools().some((tool) => tool.name === "activate_capability"), false);
-			assert.equal(runtime.session.getAllTools().filter((tool) => tool.name === "run_performance_test").length, 1);
-			assert.equal(createToolRegistry(state).some((tool) => tool.name.includes("_vllm_")), false);
-			assert.deepEqual(runtime.session.resourceLoader.getAgentsFiles().agentsFiles, []);
-			assert.deepEqual(runtime.session.resourceLoader.getSkills().skills, []);
-			assert.deepEqual(runtime.session.resourceLoader.getPrompts().prompts, []);
+			assert.deepEqual(paths, { root, agent, sessions, state, core, logs });
+				const toolNames: string[] = runtime.session.agent.state.tools.map((tool) => tool.name);
+				assert.equal(HARNESS_TOOLS.every((name) => toolNames.includes(name)), true);
+				assert.equal(toolNames.includes("investigate"), true);
+				assert.equal(toolNames.length, HARNESS_TOOLS.length + 1);
+				assert.equal(runtime.session.getAllTools().some((tool) => tool.name === "inspect_records"), true);
+				assert.equal(runtime.session.getAllTools().filter((tool) => tool.name === "write_report").length, 1);
+				assert.equal(runtime.session.getAllTools().some((tool) => tool.name === "list_deployment_presets"), false);
+				assert.equal(runtime.session.getAllTools().some((tool) => tool.name === "run_performance_test"), false);
+				assert.deepEqual(runtime.session.resourceLoader.getAgentsFiles().agentsFiles, []);
+				const skillNames = runtime.session.resourceLoader.getSkills().skills.map((skill) => skill.name).sort();
+				assert.deepEqual(skillNames, ["benchmark-suite", "prepare-engine", "prepare-model"]);
+				assert.deepEqual(runtime.session.resourceLoader.getPrompts().prompts, []);
 			assert.equal(runtime.session.resourceLoader.getExtensions().extensions.length, 1);
 			assert.equal(runtime.session.agent.state.model?.provider, "bittune-test");
 		} finally {
 			await runtime.dispose();
 		}
-		const { runtime: freshRuntime, namespaceId } = await createBittuneRuntime({
-			cwd: root,
-			paths: { root, agent, sessions, state, logs },
-			freshExperiment: true,
-		});
+	} finally {
+		if (previousKey === undefined) delete process.env.BITTUNE_TEST_API_KEY;
+		else process.env.BITTUNE_TEST_API_KEY = previousKey;
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("Bittune Runtime never opens a legacy state/bittune.db", async () => {
+	const root = await mkdtemp(join(tmpdir(), "bittune-legacy-state-"));
+	const agent = join(root, "agent");
+	const sessions = join(agent, "sessions");
+	const state = join(root, "state");
+	const core = join(root, "core");
+	const logs = join(root, "logs");
+	const previousKey = process.env.BITTUNE_TEST_API_KEY;
+	process.env.BITTUNE_TEST_API_KEY = "test-key";
+	try {
+		await mkdir(join(root, ".pi"), { recursive: true });
+		await mkdir(agent, { recursive: true });
+		await mkdir(state, { recursive: true });
+		const legacyDb = join(state, "bittune.db");
+		await writeFile(legacyDb, "legacy bittune state that must never be read or rewritten\n");
+		const before = hashOf(await readFile(legacyDb, "utf8"));
+		await writeFile(
+			join(agent, "models.json"),
+			JSON.stringify({
+				providers: {
+					"bittune-test": {
+						baseUrl: "http://127.0.0.1:18000/v1",
+						api: "openai-completions",
+						apiKey: "$BITTUNE_TEST_API_KEY",
+						authHeader: true,
+						models: [{ id: "test-agent-model", input: ["text"], reasoning: false }],
+					},
+				},
+			}),
+		);
+		await writeFile(
+			join(agent, "settings.json"),
+			JSON.stringify({ defaultProvider: "bittune-test", defaultModel: "test-agent-model" }),
+		);
+		await markBittuneAgentConfiguration(agent);
+		const { runtime } = await createBittuneRuntime({ cwd: root, paths: { root, agent, sessions, state, core, logs } });
 		try {
-			assert.match(namespaceId ?? "", /^fresh-[a-f0-9]{32}$/);
-			const freshTools: string[] = freshRuntime.session.agent.state.tools.map((tool) => tool.name);
-			assert.equal(freshTools.includes("list_run_records"), false);
-			assert.equal(freshTools.includes("get_run_record"), false);
-			assert.equal(freshTools.includes("read_artifact_excerpt"), false);
+			assert.ok(runtime.session.getActiveToolNames().includes("inspect_environment"));
 		} finally {
-			await freshRuntime.dispose();
+			await runtime.dispose();
 		}
+		assert.equal(hashOf(await readFile(legacyDb, "utf8")), before);
 	} finally {
 		if (previousKey === undefined) delete process.env.BITTUNE_TEST_API_KEY;
 		else process.env.BITTUNE_TEST_API_KEY = previousKey;
@@ -233,7 +271,7 @@ test("Bittune Runtime preserves Pi Agent Loop streaming and final assistant mess
 		await markBittuneAgentConfiguration(agent);
 		const previousKey = process.env.BITTUNE_TEST_API_KEY;
 		process.env.BITTUNE_TEST_API_KEY = "test-key";
-		const { runtime } = await createBittuneRuntime({ cwd: root, paths: { root, agent } });
+		const { runtime } = await createBittuneRuntime({ cwd: root, paths: { root, agent, core: join(root, "core") } });
 		try {
 			await runtime.session.prompt("hello");
 			const assistant = runtime.session.state.messages.find((message) => message.role === "assistant");
@@ -245,7 +283,7 @@ test("Bittune Runtime preserves Pi Agent Loop streaming and final assistant mess
 				"Bittune is ready",
 			);
 			assert.equal(requests.length, 1);
-			assert.match(requests[0] ?? "", /bittune-system-prompt:v2/);
+					assert.match(requests[0] ?? "", /bittune-system-prompt:v12/);
 			assert.doesNotMatch(requests[0] ?? "", /expert coding assistant operating inside pi/i);
 		} finally {
 			await runtime.dispose();
@@ -274,7 +312,7 @@ test("Bittune Runtime can call a Domain Tool directly in one conversation", asyn
 				"cache-control": "no-cache",
 			});
 			if (requests.length === 1) {
-				response.write('data: {"id":"bittune-tool-call","object":"chat.completion.chunk","created":1,"model":"test-agent-model","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call-list-presets","type":"function","function":{"name":"list_deployment_presets","arguments":"{}"}}]},"finish_reason":null}]}\n\n');
+				response.write(`data: ${JSON.stringify({ id: "bittune-tool-call", object: "chat.completion.chunk", created: 1, model: "test-agent-model", choices: [{ index: 0, delta: { role: "assistant", tool_calls: [{ index: 0, id: "call-inspect-records", type: "function", function: { name: "inspect_records", arguments: JSON.stringify({ kind: "run" }) } }, { index: 1, id: "call-inspect-snapshots", type: "function", function: { name: "inspect_records", arguments: JSON.stringify({ kind: "hardware_snapshot" }) } }] }, finish_reason: null }] })}\n\n`);
 				response.write('data: {"id":"bittune-tool-call","object":"chat.completion.chunk","created":1,"model":"test-agent-model","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n\n');
 			} else {
 				response.write('data: {"id":"bittune-tool-result","object":"chat.completion.chunk","created":1,"model":"test-agent-model","choices":[{"index":0,"delta":{"role":"assistant","content":"Tool observation received."},"finish_reason":null}]}\n\n');
@@ -312,16 +350,18 @@ test("Bittune Runtime can call a Domain Tool directly in one conversation", asyn
 			JSON.stringify({ defaultProvider: "bittune-test", defaultModel: "test-agent-model" }),
 		);
 		await markBittuneAgentConfiguration(agent);
-		const { runtime } = await createBittuneRuntime({ cwd: root, paths: { root, agent } });
+		const { runtime } = await createBittuneRuntime({ cwd: root, paths: { root, agent, core: join(root, "core") } });
 		try {
-			await runtime.session.prompt("list available deployment presets");
+			await runtime.session.prompt("list available records");
 			assert.equal(requests.length, 2);
 			const firstRequest = JSON.stringify(requests[0]);
-			assert.match(firstRequest, /"list_deployment_presets"/);
+			assert.match(firstRequest, /"inspect_records"/);
 			assert.doesNotMatch(firstRequest, /"activate_capability"/);
 			const secondRequest = JSON.stringify(requests[1]);
 			assert.match(secondRequest, /"role":"tool"/);
-			assert.match(secondRequest, /"tool_call_id":"call-list-presets"/);
+			assert.match(secondRequest, /"tool_call_id":"call-inspect-records"/);
+			assert.match(secondRequest, /"tool_call_id":"call-inspect-snapshots"/);
+			assert.doesNotMatch(secondRequest, /core_busy/);
 			const finalAssistant = runtime.session.state.messages.filter((message) => message.role === "assistant").at(-1);
 			assert.ok(finalAssistant);
 			assert.equal(
@@ -385,7 +425,7 @@ test("Bittune Runtime preserves provider failures and empty stream errors", asyn
 			JSON.stringify({ defaultProvider: "bittune-test", defaultModel: "test-agent-model", retry: { enabled: false } }),
 		);
 		await markBittuneAgentConfiguration(agent);
-		const { runtime } = await createBittuneRuntime({ cwd: root, paths: { root, agent } });
+		const { runtime } = await createBittuneRuntime({ cwd: root, paths: { root, agent, core: join(root, "core") } });
 		try {
 			await runtime.session.prompt("trigger auth error");
 			let assistant = runtime.session.state.messages.filter((message) => message.role === "assistant").at(-1);
@@ -474,7 +514,7 @@ test("Bittune Runtime retries a transient rate limit and then completes", async 
 			}),
 		);
 		await markBittuneAgentConfiguration(agent);
-		const { runtime } = await createBittuneRuntime({ cwd: root, paths: { root, agent } });
+		const { runtime } = await createBittuneRuntime({ cwd: root, paths: { root, agent, core: join(root, "core") } });
 		try {
 			await runtime.session.prompt("retry the transient provider failure");
 			assert.equal(requests, 2);
@@ -544,12 +584,12 @@ test("Bittune Runtime restores a persisted session through the Bittune resume co
 		);
 		await markBittuneAgentConfiguration(agent);
 
-		const paths = { root, agent, sessions };
+		const paths = { root, agent, sessions, core: join(root, "core") };
 		const { runtime: initialRuntime } = await createBittuneRuntime({ cwd: root, paths });
 		let sessionId: string;
 		try {
 			await initialRuntime.session.prompt("persist this turn");
-			assert.equal(initialRuntime.session.getActiveToolNames().includes("list_deployment_presets"), true);
+			assert.equal(initialRuntime.session.getActiveToolNames().includes("inspect_records"), true);
 			sessionId = initialRuntime.session.sessionManager.getSessionId();
 			Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
 			const resumeCommand = formatResumeCommand(initialRuntime.session.sessionManager);
@@ -561,7 +601,7 @@ test("Bittune Runtime restores a persisted session through the Bittune resume co
 		const { runtime: resumedRuntime } = await createBittuneRuntime({ cwd: root, paths, sessionId: sessionId! });
 		try {
 			assert.equal(resumedRuntime.session.sessionManager.getSessionId(), sessionId!);
-			assert.equal(resumedRuntime.session.getActiveToolNames().includes("list_deployment_presets"), true);
+			assert.equal(resumedRuntime.session.getActiveToolNames().includes("inspect_records"), true);
 			const restoredAssistant = resumedRuntime.session.state.messages.find((message) => message.role === "assistant");
 			assert.ok(restoredAssistant);
 			assert.equal(

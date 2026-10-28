@@ -1,4 +1,4 @@
-node_modules/
+node_modules
 dist/
 release/
 coverage/
@@ -26,3 +26,21 @@ architecture/*.visual-check.*
 /AGENTS.md
 docs/qa-report-*
 docs/deep-usage-test-*
+
+# Python bytecode cache
+__pycache__/
+*.pyc
+
+# Python build artifacts
+build/
+*.egg-info/
+
+# Local Python development environment
+.venv/
+
+# macOS local metadata
+.DS_Store
+
+# Local handover records and private execution evidence
+/交接文档/
+/docs/
