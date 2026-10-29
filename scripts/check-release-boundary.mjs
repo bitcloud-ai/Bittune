@@ -13,7 +13,7 @@ const packed = JSON.parse(
 	}),
 )[0];
 const paths = packed.files.map(({ path }) => path).sort();
-const expectedPaths = [
+const requiredPaths = [
 	"LICENSE",
 	"README.en.md",
 	"README.md",
@@ -23,23 +23,41 @@ const expectedPaths = [
 	"dist/bittune.js",
 	"dist/modes/interactive/theme/dark.json",
 	"dist/modes/interactive/theme/light.json",
+	"dist/skills/prepare-engine/SKILL.md",
+	"dist/skills/prepare-engine/scripts/prepare-engine.sh",
+	"dist/skills/prepare-model/SKILL.md",
+	"dist/skills/prepare-model/scripts/prepare-model.sh",
+	"dist/node_modules/@silvia-odwyer/photon-node/package.json",
+	"dist/node_modules/@silvia-odwyer/photon-node/photon_rs.js",
+	"dist/node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm",
 	"guide/README.md",
+	"guide/benchmark-contract.md",
+	"guide/task-scope-and-reporting.md",
+	"guide/examples/m1-profile-v2.json",
 	"guide/getting-started.md",
 	"guide/operations.md",
 	"install/bootstrap.sh",
 	"install/build-offline-bundle.sh",
 	"install/offline-manifest.env",
 	"install/requirements.txt",
+	"install/core-requirements.txt",
 	"package.json",
-].sort();
+];
+const allowedPrefixes = ["dist/skills/", "dist/node_modules/@silvia-odwyer/photon-node/"];
 
-if (JSON.stringify(paths) !== JSON.stringify(expectedPaths)) {
-	throw new Error(
-		"Unexpected release package contents.\nExpected: " +
-			expectedPaths.join(", ") +
-			"\nActual: " +
-			paths.join(", "),
-	);
+for (const required of requiredPaths) {
+	if (!paths.includes(required)) {
+		throw new Error(`Release package is missing required file: ${required}\nActual: ${paths.join(", ")}`);
+	}
+}
+const unexpected = paths.filter(
+	(path) => !requiredPaths.includes(path) && !allowedPrefixes.some((prefix) => path.startsWith(prefix)),
+);
+if (unexpected.length > 0) {
+	throw new Error("Unexpected release package contents:\n" + unexpected.join("\n"));
+}
+if (paths.includes("dist/photon_rs_bg.wasm")) {
+	throw new Error("Photon wasm must sit beside photon_rs.js in the vendor tree, not at dist/.");
 }
 if (packageJson.bin?.bittune !== "dist/bittune.js" || Object.keys(packageJson.bin ?? {}).length !== 1) {
 	throw new Error("Release package must expose exactly the Bittune CLI entrypoint.");
@@ -48,9 +66,45 @@ if (packageJson.piConfig || packageJson.name !== "@bittune/runtime") {
 	throw new Error("Release package contains an upstream product configuration surface.");
 }
 
+const forbiddenAisim = /aisimulate|aisim-service/i;
+for (const packedPath of paths) {
+	if (forbiddenAisim.test(packedPath)) {
+		throw new Error(`Release package must not contain aisim: ${packedPath}`);
+	}
+}
+const installerRequirements = await readFile("install/requirements.txt", "utf8");
+if (forbiddenAisim.test(installerRequirements)) {
+	throw new Error("install/requirements.txt must not pin the aisimulate wheel.");
+}
+
+const installSources = [
+	"install/bootstrap.sh",
+	"install/build-offline-bundle.sh",
+	"packages/bittune-runtime/src/cli/install/components.ts",
+];
+for (const file of installSources) {
+	const text = await readFile(file, "utf8");
+	if (/\bnpm\s+(install|ci)\b/.test(text)) {
+		throw new Error(`${file} still installs agent dependencies with npm.`);
+	}
+}
+
 const help = execFileSync(process.execPath, [resolve("dist/bittune.js"), "--help"], { encoding: "utf8" });
 if (!/\bBittune\b/.test(help) || /\bpi\b/i.test(help)) {
 	throw new Error("Bittune help contains an unexpected product surface:\n" + help);
+}
+
+const version = execFileSync(process.execPath, [resolve("dist/bittune.js"), "version"], { encoding: "utf8" });
+if (!/\bBittune\b/.test(version)) {
+	throw new Error("Bittune version did not print a product version:\n" + version);
+}
+
+// The release bundle must not carry the pre-Harness domain surface: no legacy
+// tool names, no Node-side SQLite, no capabilities package imports.
+const bundle = await readFile(resolve("dist/bittune.js"), "utf8");
+const forbiddenSymbols = ["list_deployment_presets", "run_performance_test", "createToolRegistry", "bittune.db", "bittune-capabilities", "createMcpTools"];
+for (const symbol of forbiddenSymbols) {
+	if (bundle.includes(symbol)) throw new Error(`Release bundle contains a legacy symbol: ${symbol}`);
 }
 
 try {

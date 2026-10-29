@@ -10,6 +10,7 @@ import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { normalizeDisplayText, renderToolPath, replaceTabs, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
+import { GENERIC_TOOL_LABELS } from "../../harness/tui/copy.ts";
 
 const writeSchema = Type.Object({
 	path: Type.String({ description: "Path to the file to write (relative or absolute)" }),
@@ -143,7 +144,8 @@ function formatWriteCall(
 	const rawPath = str(args?.file_path ?? args?.path);
 	const fileContent = str(args?.content);
 	const pathDisplay = renderToolPath(rawPath, theme, cwd);
-	let text = `${theme.fg("toolTitle", theme.bold("write"))} ${pathDisplay}`;
+		// BITTUNE-FORK: visible card title is the Chinese product label.
+		let text = `${theme.fg("toolTitle", theme.bold(GENERIC_TOOL_LABELS.write))} ${pathDisplay}`;
 
 	if (fileContent === null) {
 		text += `\n\n${theme.fg("error", "[invalid content arg - expected string]")}`;
@@ -189,8 +191,8 @@ export function createWriteToolDefinition(
 ): ToolDefinition<typeof writeSchema, undefined> {
 	const ops = options?.operations ?? defaultWriteOperations;
 	return {
-		name: "write",
-		label: "write",
+			name: "write",
+			label: GENERIC_TOOL_LABELS.write, // BITTUNE-FORK: Chinese product card title.
 		description:
 			"Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.",
 		promptSnippet: writeToolSystemPromptContribution.snippet,

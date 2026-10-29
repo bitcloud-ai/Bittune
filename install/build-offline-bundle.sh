@@ -12,15 +12,17 @@ for command in tar curl sha256sum; do command -v "${command}" >/dev/null || { ec
 mkdir -p "${OUTPUT_DIR}"; STAGE="$(mktemp -d "${OUTPUT_DIR}/.offline.XXXXXX")"; trap 'rm -rf "${STAGE}"' EXIT
 ROOT="${STAGE}/bittune-${VERSION}-linux-x86_64-offline"; mkdir -p "${ROOT}"
 tar -xzf "${ONLINE_PACKAGE}" --strip-components=1 -C "${ROOT}"
-[[ -f "${ROOT}/manifest.json" && -f "${ROOT}/agent/package.json" && -f "${ROOT}/agent/dist/bittune.js" ]] || { echo "Online package has invalid structure" >&2; exit 1; }
+	[[ -f "${ROOT}/manifest.json" && -f "${ROOT}/agent/package.json" && -f "${ROOT}/agent/dist/bittune.js" ]] || { echo "Online package has invalid structure" >&2; exit 1; }
+	[[ -f "${ROOT}/agent/skills/prepare-model/SKILL.md" ]] || { echo "Online package is missing skills" >&2; exit 1; }
+	[[ -f "${ROOT}/agent/dist/node_modules/@silvia-odwyer/photon-node/photon_rs.js" ]] || { echo "Online package is missing photon vendor" >&2; exit 1; }
+	[[ -f "${ROOT}/agent/dist/node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm" ]] || { echo "Online package is missing photon wasm" >&2; exit 1; }
+[[ -f "${ROOT}/core/pyproject.toml" && -f "${ROOT}/core/src/bittune_core/__main__.py" ]] || { echo "Online package is missing the Python Core payload" >&2; exit 1; }
+compgen -G "${ROOT}/core-wheel/bittune_core-"*"py3-none-any.whl" >/dev/null || { echo "Online package is missing the prebuilt Python Core wheel" >&2; exit 1; }
 grep -q '"package_type": "online"' "${ROOT}/manifest.json" || { echo "Online package manifest is invalid" >&2; exit 1; }
 ARCHIVE="${ROOT}/node-${NODE_VERSION}-linux-x64.tar.xz"
 curl --fail --location --proto '=https' --tlsv1.2 "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-x64.tar.xz" -o "${ARCHIVE}"
 echo "${NODE_SHA256}  ${ARCHIVE}" | sha256sum --check --status; tar -xJf "${ARCHIVE}" -C "${ROOT}"; rm -f "${ARCHIVE}"
-NODE_BIN="${ROOT}/node-${NODE_VERSION}-linux-x64/bin/node"
-PATH="$(dirname "${NODE_BIN}"):${PATH}" "${ROOT}/node-${NODE_VERSION}-linux-x64/bin/npm" install --omit=dev --ignore-scripts --prefix "${ROOT}/agent"
-[[ -d "${ROOT}/agent/node_modules" ]] || { echo "Offline package is missing production node_modules" >&2; exit 1; }
-sed -i 's/"package_type": "online"/"package_type": "offline",\n  "bundled_node": true,\n  "bundled_node_modules": true/' "${ROOT}/manifest.json"
+	sed -i 's/"package_type": "online"/"package_type": "offline",\n  "bundled_node": true/' "${ROOT}/manifest.json"
 (cd "${ROOT}" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
 tar -C "${STAGE}" -czf "${OUTPUT_DIR}/bittune-${VERSION}-linux-x86_64-offline.tar.gz" "$(basename "${ROOT}")"
 printf '%s\n' "${OUTPUT_DIR}/bittune-${VERSION}-linux-x86_64-offline.tar.gz"

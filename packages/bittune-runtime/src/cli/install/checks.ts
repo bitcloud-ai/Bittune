@@ -1,5 +1,5 @@
-import { runCommand } from "../../../../bittune-capabilities/src/shared/process.ts";
-import { readRuntimePolicy, runtimePolicyPath } from "../../../../bittune-capabilities/src/shared/runtime-policy.ts";
+import { runCommand } from "../../utils/command-runner.ts";
+import { readRuntimePolicy, runtimePolicyPath } from "./runtime-policy.ts";
 
 /**
  * One catalog drives both `bittune doctor` and the installer preflight so the

@@ -12,7 +12,12 @@ log() { printf '[bittune] %s\n' "$*"; }
 [[ "$(uname -m)" == x86_64 ]] || die "This release supports Linux x86_64 only."
 [[ ${EUID} -eq 0 ]] || die "Run the installer with sudo: sudo ./install.sh"
 [[ -f "${SCRIPT_DIR}/manifest.json" ]] || die "manifest.json is missing from the release package."
-[[ -f "${SCRIPT_DIR}/agent/dist/bittune.js" ]] || die "Bittune payload is missing from the release package."
+	[[ -f "${SCRIPT_DIR}/agent/dist/bittune.js" ]] || die "Bittune payload is missing from the release package."
+	[[ -f "${SCRIPT_DIR}/agent/skills/prepare-model/SKILL.md" ]] || die "Bittune skills are missing from the release package."
+	[[ -f "${SCRIPT_DIR}/agent/dist/node_modules/@silvia-odwyer/photon-node/photon_rs.js" ]] || die "Photon vendor is missing from the release package."
+	[[ -f "${SCRIPT_DIR}/agent/dist/node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm" ]] || die "Photon wasm is missing from the release package."
+[[ -d "${SCRIPT_DIR}/core-wheel" ]] || die "Python Core wheel directory is missing from the release package."
+compgen -G "${SCRIPT_DIR}/core-wheel/bittune_core-"*"py3-none-any.whl" >/dev/null || die "Python Core wheel is missing from the release package."
 grep -q '"architecture": "linux-x86_64"' "${SCRIPT_DIR}/manifest.json" || die "Unsupported or invalid package manifest."
 if [[ -f "${SCRIPT_DIR}/SHA256SUMS" && -x "$(command -v sha256sum || true)" ]]; then (cd "${SCRIPT_DIR}" && sha256sum --check --status SHA256SUMS) || die "Package integrity verification failed."; fi
 
@@ -59,22 +64,17 @@ main() {
     install_system_tools
   fi
   if grep -q '"package_type": "offline"' "${SCRIPT_DIR}/manifest.json" && [[ ${offline} != true ]]; then die "Offline package is missing its bundled Node.js runtime."; fi
-  if [[ ${offline} == true && ! -d "${SCRIPT_DIR}/agent/node_modules" ]]; then die "Offline package is missing production node_modules."; fi
-  node_bin="${INSTALL_ROOT}/node/bin/node"
-  if [[ ${offline} != true && ! -d "${SCRIPT_DIR}/agent/node_modules" ]]; then
-    log "Installing Bittune production dependencies..."
-    "${INSTALL_ROOT}/node/bin/npm" install --omit=dev --ignore-scripts --prefix "${SCRIPT_DIR}/agent" >/dev/null || die "npm dependency installation failed; check network or proxy settings."
-  fi
-  local args
+	  node_bin="${INSTALL_ROOT}/node/bin/node"
+	  local args
   if [[ ${offline} == true ]]; then
-    args=(install --offline "${SCRIPT_DIR}" --user "${target_user}" --yes --requirements "${SCRIPT_DIR}/requirements.txt")
+    args=(install --offline "${SCRIPT_DIR}" --user "${target_user}" --yes --requirements "${SCRIPT_DIR}/requirements.txt" --core-wheel-dir "${SCRIPT_DIR}/core-wheel")
   else
     local payload_dir="${INSTALL_ROOT}/staging/payload/package"
     rm -rf "${INSTALL_ROOT}/staging/payload"
     mkdir -p "${payload_dir}"
     cp -a "${SCRIPT_DIR}/agent/." "${payload_dir}/"
     tar -czf "${INSTALL_ROOT}/staging/bittune-payload.tar.gz" -C "${INSTALL_ROOT}/staging/payload" package
-    args=(install --package "${INSTALL_ROOT}/staging/bittune-payload.tar.gz" --user "${target_user}" --yes --requirements "${SCRIPT_DIR}/requirements.txt")
+    args=(install --package "${INSTALL_ROOT}/staging/bittune-payload.tar.gz" --user "${target_user}" --yes --requirements "${SCRIPT_DIR}/requirements.txt" --core-wheel-dir "${SCRIPT_DIR}/core-wheel")
   fi
   log "Installing Bittune for ${target_user}..."; "${node_bin}" "${SCRIPT_DIR}/agent/dist/bittune.js" "${args[@]}"
   rm -rf "${INSTALL_ROOT}/staging/bittune-payload.tar.gz" "${INSTALL_ROOT}/staging/payload"

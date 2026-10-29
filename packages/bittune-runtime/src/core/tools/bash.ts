@@ -19,6 +19,7 @@ import type { ExtensionContext, ToolDefinition, ToolRenderResultOptions } from "
 import { OutputAccumulator } from "./output-accumulator.ts";
 import { getTextOutput, invalidArgText, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
+import { GENERIC_TOOL_LABELS } from "../../harness/tui/copy.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult } from "./truncate.ts";
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
@@ -233,7 +234,8 @@ function formatBashCall(args: { command?: string; timeout?: number } | undefined
 	const timeout = args?.timeout as number | undefined;
 	const timeoutSuffix = timeout ? theme.fg("muted", ` (timeout ${timeout}s)`) : "";
 	const commandDisplay = command === null ? invalidArgText(theme) : command ? command : theme.fg("toolOutput", "...");
-	return theme.fg("toolTitle", theme.bold(`$ ${commandDisplay}`)) + timeoutSuffix;
+		// BITTUNE-FORK: visible card title uses the Chinese product label.
+		return theme.fg("toolTitle", theme.bold(`${GENERIC_TOOL_LABELS.bash} $ ${commandDisplay}`)) + timeoutSuffix;
 }
 
 function rebuildBashResultRenderComponent(
@@ -327,8 +329,8 @@ export function createBashToolDefinition(
 	const exposeSessionEnvironment = options?.exposeSessionEnvironment ?? true;
 	const spawnHook = options?.spawnHook;
 	return {
-		name: "bash",
-		label: "bash",
+			name: "bash",
+			label: GENERIC_TOOL_LABELS.bash, // BITTUNE-FORK: Chinese product card title.
 		description: `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
 		promptSnippet: bashToolSystemPromptContribution.snippet,
 		promptGuidelines: exposeSessionEnvironment ? [...bashToolSystemPromptContribution.guidelines] : undefined,

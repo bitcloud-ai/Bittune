@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "bittune-acceptance-profile",
+  "anyOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "success_rate_min",
+        "p99_e2e_latency_ms_max",
+        "p99_ttft_ms_max"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "success_rate_min": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "p99_e2e_latency_ms_max": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "p99_ttft_ms_max": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "success_rate_min",
+        "latency_comparison",
+        "request_limits_ms",
+        "p99_limits_ms",
+        "stop_policy"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 2
+        },
+        "success_rate_min": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "latency_comparison": {
+          "enum": [
+            "raw_ms",
+            "floor_ms"
+          ]
+        },
+        "request_limits_ms": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "ttft": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "tpot": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "itl": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "e2e": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        "p99_limits_ms": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "ttft": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "tpot": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "itl": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "e2e": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        "stop_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "throughput_drop_ratio"
+          ],
+          "properties": {
+            "throughput_drop_ratio": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            }
+          }
+        }
+      }
+    }
+  ]
+}

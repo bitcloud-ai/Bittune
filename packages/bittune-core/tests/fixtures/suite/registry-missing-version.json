@@ -1,0 +1,13 @@
+{
+  "registry": {
+    "profile_id": "custom",
+    "concurrency_mode": "ladder",
+    "scenarios": []
+  },
+  "acceptance": {
+    "schema_version": 1,
+    "success_rate_min": 0.99,
+    "p99_e2e_latency_ms_max": 30000,
+    "p99_ttft_ms_max": 5000
+  }
+}

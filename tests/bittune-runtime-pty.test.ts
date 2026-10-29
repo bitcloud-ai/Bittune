@@ -141,10 +141,10 @@ test("Bittune TUI renders a Tool Call/Result and executes its printed session re
 				connection: "keep-alive",
 				"cache-control": "no-cache",
 			});
-			if (requests === 1) {
-				response.write(
-					'data: {"id":"pty-tool-call","object":"chat.completion.chunk","created":1,"model":"pty-agent-model","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call-list-presets","type":"function","function":{"name":"list_deployment_presets","arguments":"{}"}}]},"finish_reason":null}]}\n\n',
-				);
+if (requests === 1) {
+					response.write(
+						'data: {"id":"pty-tool-call","object":"chat.completion.chunk","created":1,"model":"pty-agent-model","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call-inspect-records","type":"function","function":{"name":"inspect_records","arguments":"{\\"kind\\":\\"run\\"}"}}]},"finish_reason":null}]}\n\n',
+					);
 				response.write(
 					'data: {"id":"pty-tool-call","object":"chat.completion.chunk","created":1,"model":"pty-agent-model","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n\n',
 				);
@@ -171,9 +171,9 @@ test("Bittune TUI renders a Tool Call/Result and executes its printed session re
 	let first: PtyRun | undefined;
 	let resumed: PtyRun | undefined;
 	try {
-		first = spawnBittunePty(["list deployment presets"], env);
-		const firstOutput = await first.waitForOutput((output) => output.includes("PTY Tool Call continuation passed."));
-		assert.match(firstOutput, /list_deployment_presets/);
+		first = spawnBittunePty(["list existing records"], env);
+			const firstOutput = await first.waitForOutput((output) => output.includes("PTY Tool Call continuation passed."));
+			assert.match(firstOutput, /查阅记录/);
 		first.write("/quit\r");
 		const firstExit = await first.waitForExit();
 		assert.equal(firstExit.code, 0);
@@ -235,12 +235,86 @@ test("Bittune TUI cancels a streaming turn with the Pi Escape binding", { skip: 
 			await new Promise((resolve) => setTimeout(resolve, 25));
 		}
 		assert.equal(requestClosed, true, "cancelling the turn must abort the provider request");
-		run.write("/quit\r");
-		const exit = await run.waitForExit();
-		assert.equal(exit.code, 0);
-	} finally {
-		run?.terminate();
-		await rm(root, { recursive: true, force: true });
-		await closeServer(server);
-	}
-});
+			run.write("/quit\r");
+			const exit = await run.waitForExit();
+			assert.equal(exit.code, 0);
+		} finally {
+			run?.terminate();
+			await rm(root, { recursive: true, force: true });
+			await closeServer(server);
+		}
+	});
+
+	const STAGE64_FORBIDDEN = [
+		"minimal coding agent",
+		"Tool observations",
+		"Welcome to bittune",
+		"This command is not available in Bittune",
+		"Direct shell commands are not available in Bittune",
+		"BitTune Runtime Policy",
+		"What's New",
+		"Use /changelog",
+		"Free Kimi",
+		"OpenCode",
+		"pi has joined Earendil",
+		"Extensions",
+		"↑   ↓   CH",
+			"core_busy:",
+			"core_unavailable:",
+			"inspect_environment",
+			"plan_deployment",
+			"inspect_records",
+		];
+
+	test("Bittune TUI shows the product banner then a compact collab-idle row", { skip: !hasLinuxScript }, async () => {
+		const server = createServer((request, response) => {
+			request.resume();
+			request.on("end", () => {
+				response.writeHead(200, {
+					"content-type": "text/event-stream",
+					connection: "keep-alive",
+					"cache-control": "no-cache",
+				});
+				response.write(
+					'data: {"id":"pty-hello","object":"chat.completion.chunk","created":1,"model":"pty-agent-model","choices":[{"index":0,"delta":{"role":"assistant","content":"你好，已在本机。"},"finish_reason":null}]}\n\n',
+				);
+				response.write(
+					'data: {"id":"pty-hello","object":"chat.completion.chunk","created":1,"model":"pty-agent-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
+				);
+				response.end("data: [DONE]\n\n");
+			});
+		});
+		const port = await listen(server);
+		const root = await mkdtemp(join(tmpdir(), "bittune-pty-banner-"));
+		await configureTestAgent(root, port);
+		const env = {
+			...process.env,
+			BITTUNE_HOME: root,
+			BITTUNE_PTY_API_KEY: "test-key",
+			TERM: "xterm-256color",
+		};
+		let run: PtyRun | undefined;
+		try {
+			run = spawnBittunePty([], env);
+			const startup = await run.waitForOutput(
+				(output) => output.includes("本机推理工程智能体") && (output.includes("BITTUNE") || output.includes("██████")),
+			);
+			assert.match(startup, /本机推理工程智能体/);
+			run.write("你好\r");
+			const compact = await run.waitForOutput((output) => output.includes("协作 空闲") && output.includes("你好，已在本机。"));
+			assert.match(compact, /协作 空闲/);
+			assert.match(compact, /本机 /);
+			assert.match(compact, /服务 /);
+			assert.match(compact, /任务 /);
+			for (const banned of STAGE64_FORBIDDEN) {
+				assert.ok(!compact.includes(banned), `TUI leaked forbidden copy: ${banned}`);
+			}
+			run.write("/quit\r");
+			const exit = await run.waitForExit();
+			assert.equal(exit.code, 0);
+		} finally {
+			run?.terminate();
+			await rm(root, { recursive: true, force: true });
+			await closeServer(server);
+		}
+	});

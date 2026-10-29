@@ -87,6 +87,7 @@ import {
 } from "../../core/model-resolver.ts";
 import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
 import { isBittuneUnavailableSlashCommand } from "../../core/bittune-product-policy.ts";
+import { COPY } from "../../harness/tui/copy.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from "../../core/session-manager.ts";
@@ -119,7 +120,7 @@ import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
 import { ExtensionSelectorComponent } from "./components/extension-selector.ts";
 import { FooterComponent, formatTokens } from "./components/footer.ts";
-import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.ts";
+import { formatKeyText, keyDisplayText, keyText } from "./components/keybinding-hints.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { createMermaidMarkdownTransformer } from "./components/mermaid.ts";
 import { ModelSelectorComponent } from "./components/model-selector.ts";
@@ -294,8 +295,8 @@ export interface InteractiveModeOptions {
 	modelFallbackMessage?: string;
 	/** Cwd to trust after reload if it gained a .pi directory during this implicitly trusted session. */
 	autoTrustOnReloadCwd?: string;
-	/** Initial message to send on startup (can include @file content) */
-	initialMessage?: string;
+		/** Initial message to send on startup (can include @file content) */
+		initialMessage?: string;
 	/** Images to attach to the initial message */
 	initialImages?: ImageContent[];
 	/** Additional messages to send after the initial message */
@@ -392,9 +393,10 @@ export class InteractiveMode {
 	private workingMessage: string | undefined = undefined;
 	private workingVisible = true;
 	private workingIndicatorOptions: WorkingIndicatorOptions | undefined = undefined;
-	private readonly defaultWorkingMessage = "Working...";
-	private readonly defaultHiddenThinkingLabel = "Thinking...";
-	private hiddenThinkingLabel = this.defaultHiddenThinkingLabel;
+		// BITTUNE-FORK: working/thinking labels come from product copy.
+			private readonly defaultWorkingMessage = COPY.working;
+			private readonly defaultHiddenThinkingLabel = COPY.thinking;
+		private hiddenThinkingLabel: string = this.defaultHiddenThinkingLabel;
 
 	private lastSigintTime = 0;
 	private lastEscapeTime = 0;
@@ -541,11 +543,11 @@ export class InteractiveMode {
 		this.editor = this.defaultEditor;
 		this.editorContainer = new Container();
 		this.editorContainer.addChild(this.editor as Component);
-		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
-		this.footer = new FooterComponent(this.session, this.footerDataProvider);
-		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
-		this.footerContainer = new Container();
-		this.footerContainer.addChild(this.footer);
+			this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
+			this.footer = new FooterComponent(this.session, this.footerDataProvider);
+			this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
+			this.footerContainer = new Container();
+			// BITTUNE-FORK: product chrome owns the footer; do not mount the token ledger as the live footer.
 
 		// Load hide thinking block setting
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
@@ -815,8 +817,8 @@ export class InteractiveMode {
 
 		this.registerSignalHandlers();
 
-		// Load changelog (only show new entries, skip for resumed sessions)
-		this.changelogMarkdown = this.getChangelogForDisplay();
+			// BITTUNE-FORK: product path never loads or shows the changelog bar.
+			this.changelogMarkdown = undefined;
 
 		// Bittune does not download helper binaries at startup. Its static Tool
 		// Registry is responsible for reporting a missing provider prerequisite.
@@ -878,61 +880,15 @@ export class InteractiveMode {
 
 		await this.themeController.applyFromSettings();
 
-		// Add header with keybindings from config (unless silenced)
-		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
-			const logo = theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
-
-			// Build startup instructions using keybinding hint helpers
-			const hint = (keybinding: AppKeybinding, description: string) => keyHint(keybinding, description);
-
-			const expandedInstructions = [
-				hint("app.interrupt", "to interrupt"),
-				hint("app.clear", "to clear"),
-				rawKeyHint(`${keyText("app.clear")} twice`, "to exit"),
-				hint("app.exit", "to exit (empty)"),
-				hint("app.suspend", "to suspend"),
-				keyHint("tui.editor.deleteToLineEnd", "to delete to end"),
-				hint("app.thinking.cycle", "to cycle thinking level"),
-				hint("app.tools.expand", "to expand tools"),
-				hint("app.thinking.toggle", "to expand thinking"),
-				hint("app.editor.external", "for external editor"),
-				rawKeyHint("/", "for commands"),
-				hint("app.message.followUp", "to queue follow-up"),
-				hint("app.message.dequeue", "to edit all queued messages"),
-				hint("app.clipboard.pasteImage", "to paste image (with text fallback)"),
-				rawKeyHint("drop files", "to attach"),
-			].join("\n");
-			const compactInstructions = [
-				hint("app.interrupt", "interrupt"),
-				rawKeyHint(`${keyText("app.clear")}/${keyText("app.exit")}`, "clear/exit"),
-				rawKeyHint("/", "commands"),
-				hint("app.tools.expand", "more"),
-			].join(theme.fg("muted", " · "));
-			const compactOnboarding = theme.fg(
-				"dim",
-				`Press ${keyText("app.tools.expand")} to show startup details.`,
-			);
-			const onboarding = theme.fg(
-				"dim",
-				`Bittune uses the current goal and Tool observations to decide the next action.`,
-			);
-			this.builtInHeader = new ExpandableText(
-				() => `${logo}\n${compactInstructions}\n${compactOnboarding}\n\n${onboarding}`,
-				() => `${logo}\n${expandedInstructions}\n\n${onboarding}`,
-				this.getStartupExpansionState(),
-				1,
-				0,
-			);
-
-			// Setup UI layout
-			this.headerContainer.addChild(new Spacer(1));
-			this.headerContainer.addChild(this.builtInHeader);
-			this.headerContainer.addChild(new Spacer(1));
-		} else {
-			// Minimal header when silenced
+			// BITTUNE-FORK: product banner replaces this placeholder on session_start; keep a blank Text so setExtensionHeader can swap by index.
 			this.builtInHeader = new Text("", 0, 0);
-			this.headerContainer.addChild(this.builtInHeader);
-		}
+			if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
+				this.headerContainer.addChild(new Spacer(1));
+				this.headerContainer.addChild(this.builtInHeader);
+				this.headerContainer.addChild(new Spacer(1));
+			} else {
+				this.headerContainer.addChild(this.builtInHeader);
+			}
 		this.ui.requestRender();
 
 		// Initialize extensions first so resources are shown before messages
@@ -1767,8 +1723,8 @@ export class InteractiveMode {
 
 		const extensionRunner = this.session.extensionRunner;
 		this.setupExtensionShortcuts(extensionRunner);
-		this.showLoadedResources({ force: false, showDiagnosticsWhenQuiet: true });
-		this.showStartupNoticesIfNeeded();
+			this.showLoadedResources({ force: false, showDiagnosticsWhenQuiet: true });
+			// BITTUNE-FORK: skip changelog / first-run notices on the product path.
 	}
 
 	private applyFullscreenScrollbarSetting(): void {
@@ -2050,11 +2006,10 @@ export class InteractiveMode {
 		if (this.extensionEditor) {
 			this.hideExtensionEditor();
 		}
-		this.ui.hideOverlay();
-		this.clearExtensionTerminalInputListeners();
-		this.setExtensionFooter(undefined);
-		this.setExtensionHeader(undefined);
-		this.clearExtensionWidgets();
+			this.ui.hideOverlay();
+			this.clearExtensionTerminalInputListeners();
+			// BITTUNE-FORK: keep product header/footer until the next session_start; do not restore the token ledger or English onboarding.
+			this.clearExtensionWidgets();
 		this.footerDataProvider.clearExtensionStatuses();
 		this.footer.invalidate();
 		this.autocompleteProviderWrappers = [];
@@ -2112,29 +2067,24 @@ export class InteractiveMode {
 	/**
 	 * Set a custom footer component, or restore the built-in footer.
 	 */
-	private setExtensionFooter(
-		factory:
-			| ((tui: TUI, thm: Theme, footerData: ReadonlyFooterDataProvider) => Component & { dispose?(): void })
-			| undefined,
-	): void {
-		// Dispose existing custom footer
-		if (this.customFooter?.dispose) {
-			this.customFooter.dispose();
-		}
-
-		this.footerContainer.clear();
-		if (factory) {
-			// Create and add custom footer, passing the data provider
+		private setExtensionFooter(
+			factory:
+				| ((tui: TUI, thm: Theme, footerData: ReadonlyFooterDataProvider) => Component & { dispose?(): void })
+				| undefined,
+		): void {
+			if (!factory) {
+				// BITTUNE-FORK: keep the product footer; do not restore the token ledger.
+				this.ui.requestRender();
+				return;
+			}
+			if (this.customFooter?.dispose) {
+				this.customFooter.dispose();
+			}
+			this.footerContainer.clear();
 			this.customFooter = factory(this.ui, theme, this.footerDataProvider);
 			this.footerContainer.addChild(this.customFooter);
-		} else {
-			// Restore built-in footer
-			this.customFooter = undefined;
-			this.footerContainer.addChild(this.footer);
+			this.ui.requestRender();
 		}
-
-		this.ui.requestRender();
-	}
 
 	/**
 	 * Set a custom header component, or restore the built-in header.
@@ -2145,17 +2095,17 @@ export class InteractiveMode {
 			return;
 		}
 
-		// Dispose existing custom header
-		if (this.customHeader?.dispose) {
-			this.customHeader.dispose();
-		}
+			if (!factory) {
+				// BITTUNE-FORK: keep the product header; do not restore English onboarding.
+				return;
+			}
 
-		// Find the index of the current header in the header container
-		const currentHeader = this.customHeader || this.builtInHeader;
-		const index = this.headerContainer.children.indexOf(currentHeader);
+			if (this.customHeader?.dispose) {
+				this.customHeader.dispose();
+			}
 
-		if (factory) {
-			// Create and add custom header
+			const currentHeader = this.customHeader || this.builtInHeader;
+			const index = this.headerContainer.children.indexOf(currentHeader);
 			this.customHeader = factory(this.ui, theme);
 			if (isExpandable(this.customHeader)) {
 				this.customHeader.setExpanded(this.toolOutputExpanded);
@@ -2163,19 +2113,8 @@ export class InteractiveMode {
 			if (index !== -1) {
 				this.headerContainer.children[index] = this.customHeader;
 			} else {
-				// If not found (e.g. builtInHeader was never added), add at the top
 				this.headerContainer.children.unshift(this.customHeader);
 			}
-		} else {
-			// Restore built-in header
-			this.customHeader = undefined;
-			if (isExpandable(this.builtInHeader)) {
-				this.builtInHeader.setExpanded(this.toolOutputExpanded);
-			}
-			if (index !== -1) {
-				this.headerContainer.children[index] = this.builtInHeader;
-			}
-		}
 
 		this.ui.requestRender();
 	}
@@ -2339,8 +2278,9 @@ export class InteractiveMode {
 		message: string,
 		opts?: ExtensionUIDialogOptions,
 	): Promise<boolean> {
-		const result = await this.showExtensionSelector(`${title}\n${message}`, ["Yes", "No"], opts);
-		return result === "Yes";
+			// BITTUNE-FORK: confirm buttons use product copy.
+			const result = await this.showExtensionSelector(`${title}\n${message}`, [COPY.confirm.yes, COPY.confirm.no], opts);
+			return result === COPY.confirm.yes;
 	}
 
 	private async promptForMissingSessionCwd(error: MissingSessionCwdError): Promise<string | undefined> {
@@ -2748,16 +2688,18 @@ export class InteractiveMode {
 		this.defaultEditor.onSubmit = async (text: string) => {
 			text = text.trim();
 			if (!text) return;
-			if (isBittuneUnavailableSlashCommand(text)) {
-				this.showWarning("This command is not available in Bittune.");
-				this.editor.setText("");
-				return;
-			}
-			if (text.startsWith("!")) {
-				this.showWarning("Direct shell commands are not available in Bittune.");
-				this.editor.setText("");
-				return;
-			}
+				if (isBittuneUnavailableSlashCommand(text)) {
+					// BITTUNE-FORK: blacklist slash uses product unknown-command copy.
+					this.showWarning(COPY.errors.unknownCommand);
+					this.editor.setText("");
+					return;
+				}
+				if (text.startsWith("!")) {
+					// BITTUNE-FORK: direct shell is not a product operation.
+					this.showWarning(COPY.errors.unknownCommand);
+					this.editor.setText("");
+					return;
+				}
 
 			// Handle commands
 			if (text === "/settings") {
@@ -6063,11 +6005,9 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
-	private checkDaxnutsEasterEgg(model: { provider: string; id: string }): void {
-		if (model.provider === "opencode" && model.id.toLowerCase().includes("kimi-k2.5")) {
-			this.handleDaxnuts();
+		private checkDaxnutsEasterEgg(_model: { provider: string; id: string }): void {
+			// BITTUNE-FORK: product path never auto-pops Daxnuts.
 		}
-	}
 
 	private async handleBashCommand(command: string, excludeFromContext = false): Promise<void> {
 		const extensionRunner = this.session.extensionRunner;

@@ -1,6 +1,7 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
+import { COPY } from "../../../harness/tui/copy.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
 
@@ -22,14 +23,14 @@ export class AssistantMessageComponent extends Container {
 	private hasToolCalls = false;
 	private isStreaming = false;
 
-	constructor(
-		message?: AssistantMessage,
-		hideThinkingBlock = false,
-		markdownTheme: MarkdownTheme = getMarkdownTheme(),
-		hiddenThinkingLabel = "Thinking...",
-		outputPad = 1,
-		markdownTransformers: readonly MarkdownTransformer[] = [],
-	) {
+			constructor(
+				message?: AssistantMessage,
+				hideThinkingBlock = false,
+				markdownTheme: MarkdownTheme = getMarkdownTheme(),
+				hiddenThinkingLabel: string = COPY.thinking, // BITTUNE-FORK: default hidden-thinking label is product copy.
+				outputPad = 1,
+				markdownTransformers: readonly MarkdownTransformer[] = [],
+			) {
 		super();
 
 		this.hideThinkingBlock = hideThinkingBlock;

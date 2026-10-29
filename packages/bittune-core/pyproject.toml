@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bittune-core"
+version = "0.1.0"
+description = "BitTune local Core: deterministic validation, managed service lifecycle, benchmarks and the evidence store."
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "jsonschema==4.23.0",
+    "openpyxl==3.1.5",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+bittune_core = ["data/*.json", "data/schemas/*.json"]

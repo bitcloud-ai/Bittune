@@ -3,7 +3,7 @@ import { createInterface } from "node:readline";
 import { join, resolve } from "node:path";
 import { COMPONENTS, ComponentSkipped, type ComponentDefinition, type InstallContext } from "./components.ts";
 import { runChecks, renderCheckLines, type CheckResult } from "./checks.ts";
-import { runCommand } from "../../../../bittune-capabilities/src/shared/process.ts";
+import { runCommand } from "../../utils/command-runner.ts";
 
 export const INSTALL_ROOT = process.env.BITTUNE_INSTALL_ROOT?.trim() || "/opt/bittune";
 
@@ -19,6 +19,8 @@ export interface InstallOptions {
   stageDir?: string;
   /** Pinned Python requirements list shipped beside the bootstrap entrypoint. */
   requirementsPath?: string;
+  /** Directory holding the prebuilt bittune_core wheel shipped with the release. */
+  coreWheelDir?: string;
 }
 
 type ExecutedStatus = "satisfied" | "installed" | "skipped" | "failed";
@@ -214,6 +216,7 @@ export async function runInstallCommand(options: InstallOptions): Promise<number
       payloadPath: payloadPath ?? "",
       ...(options.stageDir ? { stageAgentDir: options.stageDir } : {}),
       ...(options.requirementsPath ? { requirementsPath: options.requirementsPath } : {}),
+      ...(options.coreWheelDir ? { coreWheelDir: options.coreWheelDir } : {}),
       appendLog,
     };
 

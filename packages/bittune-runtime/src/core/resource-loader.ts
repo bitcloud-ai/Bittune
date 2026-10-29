@@ -415,18 +415,21 @@ export class DefaultResourceLoader implements ResourceLoader {
 			this.lastPromptPaths = [];
 			this.lastThemePaths = [];
 
-			const baseSystemPrompt = resolvePromptInput(this.systemPromptSource, "system prompt");
-			this.systemPrompt = this.systemPromptOverride ? this.systemPromptOverride(baseSystemPrompt) : baseSystemPrompt;
-			this.systemPromptSourcePath = undefined;
-			const baseAppend = (this.appendSystemPromptSource ?? [])
-				.map((source) => resolvePromptInput(source, "append system prompt"))
-				.filter((source): source is string => source !== undefined);
-			this.appendSystemPrompt = this.appendSystemPromptOverride
-				? this.appendSystemPromptOverride(baseAppend)
-				: baseAppend;
-			this.appendSystemPromptSourcePaths = [];
-			this.loaded = true;
-			return;
+				const baseSystemPrompt = resolvePromptInput(this.systemPromptSource, "system prompt");
+				this.systemPrompt = this.systemPromptOverride ? this.systemPromptOverride(baseSystemPrompt) : baseSystemPrompt;
+				this.systemPromptSourcePath = undefined;
+				const baseAppend = (this.appendSystemPromptSource ?? [])
+					.map((source) => resolvePromptInput(source, "append system prompt"))
+					.filter((source): source is string => source !== undefined);
+				this.appendSystemPrompt = this.appendSystemPromptOverride
+					? this.appendSystemPromptOverride(baseAppend)
+					: baseAppend;
+				this.appendSystemPromptSourcePaths = [];
+				// BITTUNE-FORK: staticOnly still loads product additionalSkillPaths after wiping user/project skills.
+				this.lastSkillPaths = this.additionalSkillPaths;
+				this.updateSkillsFromPaths(this.additionalSkillPaths);
+				this.loaded = true;
+				return;
 		}
 
 		let preTrustExtensions: LoadExtensionsResult | undefined;
