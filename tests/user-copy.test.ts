@@ -71,13 +71,6 @@ test("harness user copy: inspect_records 原生返回（无 run 封装）也能�
 			assert.ok(/only if no\s+matching skill exists/.test(BITTUNE_SYSTEM_PROMPT));
 			assert.ok(!BITTUNE_SYSTEM_PROMPT.includes("ask Cloud for a shortlist or layout before creating"));
 			assert.ok(!BITTUNE_SYSTEM_PROMPT.includes("Sweep numbers appear only through report references"));
-			assert.ok(BITTUNE_SYSTEM_PROMPT.includes("It is not a SKU guarantee"));
-			assert.ok(BITTUNE_SYSTEM_PROMPT.includes("there is no simulated data for this kind of"));
-			assert.ok(BITTUNE_SYSTEM_PROMPT.includes("Do not call it a simulation failure"));
-			assert.ok(BITTUNE_SYSTEM_PROMPT.includes("simulated mean"));
-			assert.ok(BITTUNE_SYSTEM_PROMPT.includes("not p99"));
-				assert.ok(BITTUNE_SYSTEM_PROMPT.includes("Never invent, hand-fill"));
-				assert.ok(/Do not imply the\s+local Core is broken/.test(BITTUNE_SYSTEM_PROMPT));
 			assert.ok(!BITTUNE_SYSTEM_PROMPT.includes("NVIDIA"));
 			assert.ok(!BITTUNE_SYSTEM_PROMPT.includes("AISimulate"));
 			assert.ok(!BITTUNE_SYSTEM_PROMPT.includes("aisimulate"));

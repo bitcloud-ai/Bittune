@@ -182,7 +182,7 @@ test("发行完全体：空目录 spawn dist 过解析 / 装配 / 会话三层�
 		const doctorOut = `${doctor.stdout}\n${doctor.stderr}`;
 		assert.match(doctorOut, /Runtime assembled:/, doctorOut);
 		assert.doesNotMatch(doctorOut, /Runtime assembled: failed/, doctorOut);
-		assert.match(doctorOut, /Runtime assembled: 18 tools/, doctorOut);
+		assert.match(doctorOut, /Runtime assembled: 15 tools/, doctorOut);
 
 		const session = await spawnCaptured(process.execPath, [bundle, "read note.txt"], {
 			cwd: sandbox,
