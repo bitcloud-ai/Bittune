@@ -49,7 +49,7 @@ test("harness user copy: inspect_records 原生返回（无 run 封装）也能�
 
 		test("runtime prompt: 系统提示词不带内部协议术语且版本已冻结为 v13", () => {
 			assert.ok(BITTUNE_SYSTEM_PROMPT.includes(BITTUNE_SYSTEM_PROMPT_MARKER));
-			assert.equal(BITTUNE_SYSTEM_PROMPT_MARKER, "<!-- bittune-system-prompt:v13 -->");
+			assert.equal(BITTUNE_SYSTEM_PROMPT_MARKER, "<!-- bittune-system-prompt:v14 -->");
 			const internalTerms = [
 				"plan_deployment",
 				"cloud_preferred",

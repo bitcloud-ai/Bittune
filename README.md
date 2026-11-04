@@ -110,3 +110,5 @@ npm run test:gpu-acceptance
 ## 许可证
 
 Bittune 自有代码采用 [MIT License](LICENSE)。第三方组件的版权与许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+- [CLI推荐与压测技能](guide/benchmark-skills.md)：硬件推荐清单、可选V3资源安装及模块支持边界。
