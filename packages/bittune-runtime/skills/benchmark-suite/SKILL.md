@@ -1,32 +1,20 @@
 ---
 name: benchmark-suite
-description: 压测测试目录与范围选择；路由单机、缓存、P/D规划和结果交付
+description: 压测范围选择与单机、缓存、P/D规划、报告模块路由
 ---
 
-# 压测能力入口
+# 压测任务路由
 
-先沿用用户已选范围，不重复要求选套餐；范围未知时给出标准、自定义与完整非破坏性三种选择。默认短验收只跑用户同意的有限场景；安装资源不自动触发正确性、全量权重校验、长稳、并发极限或多机测试。
-
-## 本机 V3 资源
-
-脚本相对于本 Skill 所在目录。安装和计算使用当前 Python，执行脚本仍遵守 Runtime 的正常策略与动作确认。
+沿用用户已选范围；范围未知时先展示目录并确定场景、预算和停止条件。命令路径相对本Skill目录，调用时解析为绝对路径。
 
 ```text
-python3 scripts/benchmark_assets.py status
-python3 scripts/benchmark_assets.py install --archive <V3完整交付包.zip> --documents <Word与Excel包.zip>
 python3 scripts/benchmark_assets.py catalog single-node --format json
 python3 scripts/benchmark_assets.py catalog pd-cluster --json
 ```
 
-安装只读取经过核对的 V3.0.1 本地包，验证摘要，在 BITTUNE_HOME 下保留资源；BITTUNE_BENCHMARK_ASSETS 可指定资源目录。不会下载依赖、启动服务、导入独立执行 Agent 或改动 GPU。两个文档版本分别保存，不混为同一个规范。
+- 单点验证、并发或长度扫描：读取 benchmark-single-node。
+- 缓存构造、冷暖配对：读取 benchmark-cache。
+- P:D容量或集群测试目录：读取 benchmark-pd。
+- 报告、Excel、证据交付：读取 benchmark-report。
 
-## 按目标拆分
-
-| 用户目标 | 读取技能 | 当前接线 |
-| --- | --- | --- |
-| 单点验证、单机扫描、长上下文 | benchmark-single-node | 原 Core 受管单点/套件 |
-| 冷暖缓存、命中率 | benchmark-cache | V3离线构造计算 + Core支持的cache_pair |
-| P:D规划、集群目录与拓扑 | benchmark-pd | V3目录/离线计算 + Core pd_planning；多机负载适配未接线 |
-| 报告、Excel、证据包 | benchmark-report | Core原生导出；V3工作簿仅接V3登记格式 |
-
-目录和参考资料不代表所有条目都已能由 Core 执行；遇到未接线项列出缺口后停止该项，不改用原始 runner 或外部 Agent 绕过事实记录。受管服务结果按其绑定和出处引用；本机回环端点为声明来源，不能冒充受管实测。
+只执行已授权场景。实测通过Core受管工具保存事实；离线计算与外部结果保留来源。当前没有远程多机负载适配器；遇到未支持项说明缺口，不扩展为原始runner或独立Agent执行。

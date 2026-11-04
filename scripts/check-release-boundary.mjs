@@ -32,7 +32,6 @@ const requiredPaths = [
 	"dist/node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm",
 	"guide/README.md",
 	"guide/benchmark-contract.md",
-	"guide/benchmark-skills.md",
 	"guide/task-scope-and-reporting.md",
 	"guide/examples/m1-profile-v2.json",
 	"guide/getting-started.md",
