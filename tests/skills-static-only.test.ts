@@ -58,7 +58,7 @@ test("skills-static-only: 产品 additionalSkillPaths 进入 prompt，用户目�
 		const { loader } = await loadProductSkills(agentDir, cwd, [PRODUCT_SKILLS_DIR]);
 		const skills = loader.getSkills().skills;
 		const names = skills.map((skill) => skill.name).sort();
-		assert.deepEqual(names, ["benchmark-suite", "prepare-engine", "prepare-model"]);
+		assert.deepEqual(names, ["benchmark-cache", "benchmark-pd", "benchmark-report", "benchmark-single-node", "benchmark-suite", "deployment-recommendation", "prepare-engine", "prepare-model"]);
 		assert.equal(skills.find((skill) => skill.name === "prepare-model")?.description, COPY.skills.prepareModel);
 		assert.equal(skills.find((skill) => skill.name === "prepare-engine")?.description, COPY.skills.prepareEngine);
 		assert.equal(skills.some((skill) => skill.name === "user-fake"), false);
@@ -89,7 +89,7 @@ test("skills-static-only: 产品路径不调用 packageManager.resolve", async (
 		try {
 			const { loader } = await loadProductSkills(agentDir, cwd, [PRODUCT_SKILLS_DIR]);
 			assert.equal(resolveMock.mock.callCount(), 0);
-			assert.equal(loader.getSkills().skills.length, 3);
+			assert.equal(loader.getSkills().skills.length, 8);
 		} finally {
 			resolveMock.mock.restore();
 		}

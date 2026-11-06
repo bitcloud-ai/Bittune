@@ -109,7 +109,7 @@ test("Bittune exposes only configure-based authentication and static model selec
 				assert.equal(runtime.session.getAllTools().some((tool) => tool.name === "run_performance_test"), false);
 				assert.deepEqual(runtime.session.resourceLoader.getAgentsFiles().agentsFiles, []);
 				const skillNames = runtime.session.resourceLoader.getSkills().skills.map((skill) => skill.name).sort();
-				assert.deepEqual(skillNames, ["benchmark-suite", "prepare-engine", "prepare-model"]);
+				assert.deepEqual(skillNames, ["benchmark-cache", "benchmark-pd", "benchmark-report", "benchmark-single-node", "benchmark-suite", "deployment-recommendation", "prepare-engine", "prepare-model"]);
 				assert.deepEqual(runtime.session.resourceLoader.getPrompts().prompts, []);
 			assert.equal(runtime.session.resourceLoader.getExtensions().extensions.length, 1);
 			assert.equal(runtime.session.agent.state.model?.provider, "bittune-test");
@@ -283,7 +283,7 @@ test("Bittune Runtime preserves Pi Agent Loop streaming and final assistant mess
 				"Bittune is ready",
 			);
 			assert.equal(requests.length, 1);
-					assert.match(requests[0] ?? "", /bittune-system-prompt:v13/);
+					assert.match(requests[0] ?? "", /bittune-system-prompt:v14/);
 			assert.doesNotMatch(requests[0] ?? "", /expert coding assistant operating inside pi/i);
 		} finally {
 			await runtime.dispose();

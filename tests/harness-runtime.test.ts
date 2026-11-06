@@ -438,7 +438,7 @@ test("证据构造：Bash 保留结果与完整输出，文件工具不复制文
 });
 
 test("阶段 4：提示词、工具描述和用户文档不再把缺口写成下一步", async () => {
-	assert.equal(BITTUNE_SYSTEM_PROMPT_MARKER, "<!-- bittune-system-prompt:v13 -->");
+	assert.equal(BITTUNE_SYSTEM_PROMPT_MARKER, "<!-- bittune-system-prompt:v14 -->");
 	assert.equal(BITTUNE_SYSTEM_PROMPT.includes("ask Cloud for a shortlist or layout before creating"), false);
 	assert.equal(BITTUNE_SYSTEM_PROMPT.includes("Sweep numbers appear only through report references"), false);
 	assert.equal(BITTUNE_SYSTEM_PROMPT.includes("continue with a local plan"), false);
