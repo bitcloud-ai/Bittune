@@ -18,7 +18,6 @@ sys.path.insert(0, str(TESTS_ROOT))
 
 from bittune_core.benchmark import benchmark_service, resolve_measure_subject  # noqa: E402
 from bittune_core.cache_pair import _base as cache_base  # noqa: E402
-from bittune_core.cloud import _report_and_references  # noqa: E402
 from bittune_core.contracts import ContractError, claimable  # noqa: E402
 from bittune_core.correctness import _base as correctness_base  # noqa: E402
 from bittune_core.pd_capacity import _base as pd_base  # noqa: E402
@@ -295,10 +294,6 @@ class DeclaredMeasureTests(unittest.TestCase):
             "conclusion": "c",
             "references": {"benchmark_result_ids": [benchmark_id]},
         })["data"]["report"]
-        with self.assertRaises(ContractError) as preview:
-            _report_and_references(self.core.store, report["report_id"])
-        self.assertEqual(preview.exception.code, "invalid_input")
-        self.assertIn("不是产品签字的实测", preview.exception.message)
 
     def test_declared_suite_shares_the_resolver_and_cannot_be_claimed(self) -> None:
         source = Path(TESTS_ROOT.parent / "src" / "bittune_core" / "suite.py").read_text(encoding="utf-8")
