@@ -56,9 +56,12 @@ test("resolveIncomingAgentDistSha bundle 模式直接哈希离线包内的 dist"
 		await mkdir(distDir, { recursive: true });
 		const content = `bundled bittune dist ${Math.random()}`;
 		await writeFile(join(distDir, "bittune.js"), content);
+		await writeFile(join(distDir, "task-worker.js"), "worker");
 		const ctx = makeContext({ sourceKind: "bundle", payloadPath: join(root, "bundle"), installRoot: join(root, "opt") });
-		assert.equal(await resolveIncomingAgentDistSha(ctx), sha(content));
-		assert.equal(ctx.incomingAgentDistSha, sha(content), "digest 必须被记忆到 ctx");
+		assert.equal(await resolveIncomingAgentDistSha(ctx), sha([sha(content),sha("worker")].join(":")));
+		assert.equal(ctx.incomingAgentDistSha, sha([sha(content),sha("worker")].join(":")), "digest 必须被记忆到 ctx");
+		await writeFile(join(distDir,"task-worker.js"),"new-worker");
+		assert.notEqual(await resolveIncomingAgentDistSha({...ctx,incomingAgentDistSha:undefined}),ctx.incomingAgentDistSha,"worker-only更新也要重装");
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
@@ -71,10 +74,11 @@ test("resolveIncomingAgentDistSha network 模式从 tgz 提取 package/dist/bitt
 		await mkdir(join(payloadDir, "package", "dist"), { recursive: true });
 		const content = `tgz bittune dist ${Math.random()}`;
 		await writeFile(join(payloadDir, "package", "dist", "bittune.js"), content);
+		await writeFile(join(payloadDir, "package", "dist", "task-worker.js"), "worker");
 		const archive = join(root, "payload.tar.gz");
 		execFileSync(process.platform === "win32" ? "tar.exe" : "tar", ["-czf", "payload.tar.gz", "-C", "payload", "package"], { cwd: root });
 		const ctx = makeContext({ sourceKind: "network", payloadPath: archive, installRoot: join(root, "opt") });
-		assert.equal(await resolveIncomingAgentDistSha(ctx), sha(content));
+		assert.equal(await resolveIncomingAgentDistSha(ctx), sha([sha(content),sha("worker")].join(":")));
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}

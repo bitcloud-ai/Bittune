@@ -54,6 +54,33 @@ class CompareReportTests(SweepTests):
             "provenance": "derived",
         }, "run-00000000-0000-4000-8000-000000000000")
 
+    def test_report_extension_preserves_original_claims_and_refuses_replacement(self):
+        first = "suite-00000000-0000-4000-8000-000000000051"
+        second = "suite-00000000-0000-4000-8000-000000000052"
+        self._suite(first, 1, 10)
+        self._suite(second, 1, 12)
+        base = self.core.request(write_report, {"title":"base", "narrative":"scope", "conclusion":"saved", "suite_selections":[{"suite_result_id":first,"metrics":["requests_per_second"]}]})["data"]["report"]
+        revised = self.core.request(write_report, {"based_on_report_id":base['report_id'],"title":"revised","narrative":"text only","conclusion":"saved"})['data']['report']
+        self.assertEqual(base['suite_claims'],revised['suite_claims'])
+        extended = self.core.request(write_report, {"extends_report_id":base['report_id'],"title":"extended","suite_selections":[{"suite_result_id":second,"metrics":["requests_per_second"]}]})['data']['report']
+        self.assertEqual(extended['suite_claims'][:len(base['suite_claims'])],base['suite_claims'])
+        self.assertEqual(extended['coverage']['mode'],'extended_report')
+        self.assertEqual(extended['coverage']['source_report_id'],base['report_id'])
+        self.assertEqual({r['id'] for r in extended['references']['suite_result_ids']},{first,second})
+        self.assertEqual(self.core.store.get_fact('report',base['report_id'])['payload'],base)
+        for bid,rps in [('bench-0051',10),('bench-0052',12)]:
+            self.core.store.put_benchmark_result({'schema_version':1,'benchmark_result_id':bid,'binding':'bound','provenance':'measured','model_ref':MODEL_REF,'runtime_spec':RUNTIME_SPEC,'workload_hash':'sha256:'+'a'*64,'metrics':{'requests_per_second':rps},'hardware_snapshot_id':'snapshot-same'}, 'run-00000000-0000-4000-8000-000000000000')
+        experiment=self.core.request(compare_results,{'suite_points':[{'suite_result_id':first,'scenario_id':'short-chat','concurrency':1},{'suite_result_id':second,'scenario_id':'short-chat','concurrency':1}],'record':True})['data']['experiment']
+        with_comparison=self.core.request(write_report,{'extends_report_id':extended['report_id'],'experiment_selections':[experiment['experiment_id']]})['data']['report']
+        self.assertEqual(with_comparison['suite_claims'],extended['suite_claims'])
+        self.assertIn(experiment['experiment_id'],[e['id'] for e in with_comparison['references']['experiment_ids']])
+
+        for extra in ({'references':{}},{'metric_claims':[]},{'based_on_report_id':base['report_id']}):
+            with self.assertRaises(ContractError):
+                self.core.request(write_report, {"extends_report_id":base['report_id'],"suite_selections":[{"suite_result_id":second,"metrics":["requests_per_second"]}],**extra})
+        with self.assertRaises(ContractError):
+            self.core.request(write_report,{"extends_report_id":base['report_id'],"suite_selections":[{"suite_result_id":first,"metrics":["requests_per_second"]}]})
+
     def test_same_point_yields_a_delta(self) -> None:
         self._suite("suite-00000000-0000-4000-8000-000000000001", 4, 10)
         self._suite("suite-00000000-0000-4000-8000-000000000002", 4, 12, {"max_num_seqs": 32})

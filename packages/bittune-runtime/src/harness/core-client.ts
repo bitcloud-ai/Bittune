@@ -31,6 +31,10 @@ export class CoreError extends Error {
 }
 
 export interface CoreClientOptions {
+    /** Query-only Core connection: no lease, recovery, migrations or execution tools. */
+    readOnly?: boolean;
+    /** Host-side queries may explicitly avoid a concurrently opening task's scope. */
+    taskScopeFile?: string | null;
 	python?: string;
 	coreHome?: string;
 	/** Extra PYTHONPATH entries (dev/test; production installs the package). */
@@ -84,6 +88,8 @@ function sleep(milliseconds: number): Promise<void> {
 export function buildCoreEnv(options: CoreClientOptions): NodeJS.ProcessEnv {
 	const coreHome = options.coreHome ?? process.env.BITTUNE_CORE_HOME?.trim() ?? join(homedir(), ".bittune", "core");
 	const env: NodeJS.ProcessEnv = { ...process.env, BITTUNE_CORE_HOME: coreHome };
+    if (options.taskScopeFile === null) delete env.BITTUNE_TASK_SCOPE_FILE;
+    else if (options.taskScopeFile !== undefined) env.BITTUNE_TASK_SCOPE_FILE = options.taskScopeFile;
 	const modulePaths = options.modulePaths ?? coreModulePaths();
 	if (modulePaths.length > 0) {
 		env.PYTHONPATH = [env.PYTHONPATH, ...modulePaths].filter(Boolean).join(delimiter);
@@ -141,7 +147,7 @@ function resolvePython(options: CoreClientOptions): string {
 
 	static async start(options: CoreClientOptions = {}): Promise<CoreClient> {
 		const probe = probeCore(options);
-		const child = spawn(probe.python, ["-m", "bittune_core"], {
+		const child = spawn(probe.python, ["-m", "bittune_core", ...(options.readOnly ? ["--read-only"] : [])], {
 			env: buildCoreEnv(options),
 			windowsHide: true,
 			stdio: ["pipe", "pipe", "pipe"],
@@ -241,11 +247,15 @@ function resolvePython(options: CoreClientOptions): string {
 		for (const stream of [this.child.stdin, this.child.stdout, this.child.stderr]) {
 			stream.destroy();
 		}
-		const detail = error?.message ?? this.stderrTail.trim().split(/\r?\n/).pop();
-		this.failPending(
+        const detail = error?.message ?? this.stderrTail.trim().split(/\r?\n/).pop();
+        if (this.stderrTail.includes("core_busy:")) {
+            this.failPending(new CoreError("core_busy", "工作区已有活跃CLI或Web任务；请等待后重试。"));
+            return;
+        }
+        this.failPending(
 			new CoreError(
 				CORE_UNAVAILABLE,
-				"Bittune Core 进程已退出；本次请求未完成且未写入 Store。",
+				"Bittune Core 进程已退出；请检查已保存事实后再决定是否重试。",
 				"重新启动会话后会重新打开本地 Store。",
 				detail ? { detail } : undefined,
 			),

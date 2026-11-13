@@ -12,12 +12,49 @@ CLAIM_FIELDS = {
 def prepare_report(params, store, row_claimable):
     params = copy.deepcopy(params)
     coverage = {'version': 'report-coverage-v1', 'mode': 'explicit_subset', 'suites': []}
+    extended = params.get('extends_report_id')
+    if 'experiment_selections' in params and extended is None:
+        raise ContractError('invalid_input', '追加比较来源需要extends_report_id。')
+    if extended is not None:
+        if not isinstance(extended, str) or not extended or params.get('based_on_report_id') is not None:
+            raise ContractError('invalid_input', 'extends_report_id需要原报告ID，不能与based_on_report_id合用。')
+        if any(key in params for key in (*CLAIM_FIELDS, 'references')):
+            raise ContractError('report_coverage_mismatch', '补充来源版本保留原引用，只接受新增suite_selections及文字。')
+        source_fact = store.get_fact('report', extended)
+        inherited, original_coverage = prepare_report({'based_on_report_id': extended}, store, row_claimable)
+        selections = params.get('suite_selections') or []
+        experiments = params.get('experiment_selections') or []
+        if not isinstance(selections,list) or not isinstance(experiments,list) or not (selections or experiments):
+            raise ContractError('invalid_input', '补充来源需要新增套件或原生比较记录。')
+        if any(not isinstance(e,str) for e in experiments) or len(experiments)!=len(set(experiments)):
+            raise ContractError('invalid_input', '比较记录ID必须唯一。')
+        existing = set(inherited['references'].get('suite_result_ids', []))
+        if any(isinstance(item, dict) and item.get('suite_result_id') in existing for item in selections):
+            raise ContractError('report_coverage_mismatch', '新增套件已存在于原报告，不能重复添加。')
+        additions, extra_coverage = prepare_report({'suite_selections': selections}, store, row_claimable) if selections else ({'suite_claims':[], 'references':{'suite_result_ids':[]}}, {'suites':[]})
+        existing_experiments = inherited['references'].setdefault('experiment_ids', [])
+        for eid in experiments:
+            if eid in existing_experiments: raise ContractError('report_coverage_mismatch', '比较记录已被原报告引用。')
+            store.get_fact('experiment', eid)
+            existing_experiments.append(eid)
+        for key in ('title', 'scope', 'narrative', 'conclusion'):
+            if key in params: inherited[key] = params[key]
+        inherited['suite_claims'].extend(additions['suite_claims'])
+        inherited['references']['suite_result_ids'] = list(dict.fromkeys([*inherited['references'].get('suite_result_ids', []), *additions['references']['suite_result_ids']]))
+        coverage = {**original_coverage, 'mode': 'extended_report', 'source_report_id': extended,
+                    'source_content_hash': source_fact['content_hash'], 'source_coverage_mode': source_fact['payload'].get('coverage', {}).get('mode', 'explicit_subset'),
+                    'suites': [*original_coverage.get('suites', []), *extra_coverage['suites']]}
+        for key in CLAIM_FIELDS:
+            claims = inherited.get(key) or []
+            coverage[key + '_count'] = len(claims)
+            coverage[key + '_identity_hash'] = sha256_canonical([{k:v for k,v in c.items() if k!='label'} for c in claims])
+        return inherited, coverage
     base = params.get('based_on_report_id')
     selections = params.get('suite_selections')
     if base is not None:
         if not isinstance(base, str) or not base:
             raise ContractError('invalid_input', 'based_on_report_id需要已有报告ID。')
-        if any(key in params for key in (*CLAIM_FIELDS, 'references', 'suite_selections')):
+        if any(key in params for key in (*CLAIM_FIELDS, 'references', 'suite_selections', 'experiment_selections')):
             raise ContractError('report_coverage_mismatch', '继承报告禁止覆盖引用数组；只修改标题/范围/叙述/结论。')
         fact = store.get_fact('report', base)
         source = fact['payload']

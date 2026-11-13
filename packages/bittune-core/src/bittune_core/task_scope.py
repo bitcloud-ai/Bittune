@@ -47,6 +47,9 @@ class TaskScope:
         return rid in self.records
 
     def check(self, tool, params, store):
+        actions = self.document.get('tool_actions', {}).get(tool)
+        if actions is not None and params.get('action') not in actions:
+            self.denied('该动作不属于宿主选定的任务范围。')
         if tool=='ingest_evidence':return
         if tool=='inspect_environment':
             if params.get('probes'):self.denied('指定资源任务不执行额外GPU深度探测。')
@@ -78,8 +81,13 @@ class TaskScope:
             return
         if tool=='deploy_service':
             if params.get('action')=='start':
+                if self.document.get('max_service_starts') is not None and len(self.services) >= self.document['max_service_starts']:
+                    raise ContractError('experiment_budget_exhausted','本任务的受管服务启动预算已耗尽。')
                 if params.get('plan_id') not in self.plans:self.denied('不能启动范围外计划。')
             elif params.get('service_instance_id') not in self.services:self.denied('不能操作范围外服务。')
+            return
+        if tool=='export_deliverable' and params.get('intent') in ('report_bundle','signed_pdf'):
+            if params.get('report_id') not in self.records:self.denied('报告不在任务范围内。')
             return
         if tool in ('benchmark_service','benchmark_suite','export_deliverable'):
             if 'endpoint' in params or params.get('service_instance_id') not in self.services:self.denied('本任务只接受范围内受管服务ID，不接受外部端点。')
@@ -92,7 +100,8 @@ class TaskScope:
                 self.suite_reservation(tool, params, store)
             return
         if tool in ('write_report','compare_results'):
-            if params.get('based_on_report_id') and params['based_on_report_id'] not in self.records:self.denied('原报告不在范围内。')
+            if any(params.get(key) and params[key] not in self.records for key in ('based_on_report_id', 'extends_report_id')):self.denied('原报告不在范围内。')
+            if any(eid not in self.records for eid in params.get('experiment_selections', [])):self.denied('比较来源不在任务范围内。')
             for entry in params.get('suite_points',[])+params.get('suite_selections',[]):
                 if entry.get('suite_result_id') not in self.records:self.denied('扫描引用不在范围内。')
             if any(b not in self.records for b in params.get('benchmark_result_ids',[])):self.denied('比较实测记录不在范围内。')
@@ -114,13 +123,27 @@ class TaskScope:
             self.denied('实验档案与宿主冻结的profile_hash不一致。')
         per_suite = profile['registry']['budget']
         reservation = dict(points=per_suite['max_points'], requests=per_suite['max_requests'])
-        usage = store.experiment_budget_usage(self.scope_hash)
+        usage = self.budget_usage(store)
         if (usage['suite_calls'] >= budget['max_suite_calls'] or
                 usage['points'] + reservation['points'] > budget['max_points'] or
                 usage['requests'] + reservation['requests'] > budget['max_requests']):
             raise ContractError('experiment_budget_exhausted','实验总预算不足，不开始新的套件。',
                                 {'usage':usage,'reservation':reservation,'budget':budget})
         return reservation
+
+    def restore_history(self, store, session_id):
+        previous = self.document.get('experiment_budget', {}).get('previous_scope_hashes', [])
+        if not previous:
+            return
+        restored = store.scoped_result_ids(set(previous) | {self.scope_hash}, session_id)
+        self.plans.update(restored['plans'])
+        self.services.update(restored['services'])
+        self.records.update(restored['records'])
+
+    def budget_usage(self, store):
+        hashes = set(self.document.get('experiment_budget', {}).get('previous_scope_hashes', [])) | {self.scope_hash}
+        values = [store.experiment_budget_usage(value) for value in hashes]
+        return {key: sum(value[key] for value in values) for key in ('suite_calls', 'points', 'requests')}
 
     def register_result(self, tool, result):
         data=result.get('data') or {}

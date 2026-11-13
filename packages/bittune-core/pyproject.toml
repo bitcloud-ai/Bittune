@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bittune-core"
-version = "0.1.0"
+version = "0.2.0"
 description = "BitTune local Core: deterministic validation, managed service lifecycle, benchmarks and the evidence store."
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -12,6 +12,9 @@ dependencies = [
     "jsonschema==4.23.0",
     "openpyxl==3.1.5",
 ]
+
+[project.optional-dependencies]
+reports = ["reportlab==4.4.9", "pyHanko==0.29.1", "Pillow==13.0.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

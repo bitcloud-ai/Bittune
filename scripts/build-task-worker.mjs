@@ -1,0 +1,2 @@
+import {build} from 'esbuild';
+await build({entryPoints:['packages/bittune-runtime/src/workflows/task-worker.ts'],outfile:'dist/task-worker.js',bundle:true,format:'esm',platform:'node',target:'node22',external:['@silvia-odwyer/photon-node'],banner:{js:'process.env.BITTUNE_EMBEDDED_HOST = "1"; import { createRequire as __bittuneCreateRequire } from "node:module"; const require = __bittuneCreateRequire(import.meta.url);'},legalComments:'inline'});

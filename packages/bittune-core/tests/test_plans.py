@@ -258,7 +258,10 @@ class PlanContractTest(unittest.TestCase):
         created = self.core.request(plan_deployment, request)["data"]["plan"]
         self.assertEqual(created["prior_source"], "user_specified")
         self.assertEqual(created["model_ref"]["model_id"], "Qwen/Qwen3-32B")
-
+        row = self.core.store.db.execute(
+            "SELECT 1 FROM artifacts WHERE label IN ('cloud-recommendation', 'cloud-recommendation-attempt')"
+        ).fetchone()
+        self.assertIsNone(row)
 
 
 
@@ -269,10 +272,11 @@ class PlanContractTest(unittest.TestCase):
         for action, extra in (
             ("validate", {"prior_source": "none"}),
             ("freeze", {"based_on_plan_id": plan_id}),
+            ("validate", {"recommendation_artifact_id": "artifact-" + "0" * 32}),
         ):
             with self.assertRaises(ContractError) as raised:
                 self.core.request(plan_deployment, {"action": action, "plan_id": plan_id, **extra})
-            self.assertIn("不接收 prior_source 或 based_on_plan_id", raised.exception.message)
+            self.assertIn("不接收 prior_source、based_on_plan_id 或 recommendation_artifact_id", raised.exception.message)
         after = self.core.store.get_fact("deployment_plan", plan_id)
         self.assertEqual(after["content_hash"], before["content_hash"])
 

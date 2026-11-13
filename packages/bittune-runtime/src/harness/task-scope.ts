@@ -20,7 +20,7 @@ export interface TaskScope {
 
 export function evaluateScopedGeneric(input: GenericPolicyInput, scope: TaskScope): PolicyOutcome {
 	if (input.toolName === "bash" && scope.allow_execution && scope.preparation_commands?.includes(input.command ?? "")) {
-		return { decision: "ask", reason: "宿主授权的精确准备命令；确认后执行镜像准备及网络写入。" };
+		return { decision: "ask", confirmation: "explicit", reason: "宿主授权的精确准备命令；确认后执行制品准备及网络写入。" };
 	}
 	if (input.toolName === "bash" && scope.inventory_commands.includes(input.command ?? "")) {
 		return { decision: "allow", reason: "任务范围内固定的GPU占用查询。" };

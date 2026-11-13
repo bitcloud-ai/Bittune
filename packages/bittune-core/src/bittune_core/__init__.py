@@ -8,4 +8,4 @@ It uses only the Python standard library plus the pinned measurement tooling
 (evalscope / huggingface-hub) already installed beside Bittune.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

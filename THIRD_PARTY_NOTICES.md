@@ -17,6 +17,14 @@ license and copyright files. EvalScope is a separate optional installation.
 | et-xmlfile | 2.0.0 | MIT |
 | typing-extensions | 4.16.0 | PSF-2.0 |
 
+## Optional signed-report runtime
+
+The optional signed-report runtime uses ReportLab 4.4.9 (BSD), pyHanko
+0.29.1 (MIT) and Pillow 13.0.0 (MIT-CMU). Its complete pinned dependency
+closure is in `install/report-requirements.txt`; installed wheels retain
+their upstream license notices. This reports extra requires Python 3.11+
+and does not change the base Core/CLI's Python 3.10 compatibility.
+
 ## Embedded Agent Runtime
 
 Portions of the embedded Agent Runtime are Copyright (c) 2025 Mario Zechner
@@ -68,18 +76,19 @@ with every release package.
 | `@modelcontextprotocol/client` | 2.0.0 | MIT | github.com/modelcontextprotocol/typescript-sdk |
 | `@modelcontextprotocol/core` | 2.0.0 | MIT | github.com/modelcontextprotocol/typescript-sdk |
 | `@silvia-odwyer/photon-node` | 0.3.4 | Apache-2.0 | github.com/silvia-odwyer/photon |
+| `ajv` | 8.20.0 | MIT | github.com/ajv-validator/ajv |
 | `chalk` | 5.6.2 | MIT | github.com/chalk/chalk |
 | `cross-spawn` | 7.0.6 | MIT | github.com/moxystudio/node-cross-spawn |
 | `diff` | 8.0.4 | BSD-3-Clause | github.com/kpdecker/jsdiff |
-| `glob` | 13.0.6 | BlueOak-1.0.0 | github.com/isaacs/node-glob |
+| `glob` | 14.0.3 | BlueOak-1.0.0 | github.com/isaacs/node-glob |
 | `grok-mermaid` | 0.2.2 | Apache-2.0 | github.com/xl0/grok-mermaid |
 | `highlight.js` | 10.7.3 | BSD-3-Clause | github.com/highlightjs/highlight.js |
 | `hosted-git-info` | 9.0.3 | ISC | github.com/npm/hosted-git-info |
 | `ignore` | 7.0.5 | MIT | github.com/kaelzhang/node-ignore |
 | `jiti` | 2.7.0 | MIT | github.com/unjs/jiti |
-| `minimatch` | 10.2.5 | BlueOak-1.0.0 | github.com/isaacs/minimatch |
+| `minimatch` | 11.0.4 | BlueOak-1.0.0 | github.com/isaacs/minimatch |
 | `proper-lockfile` | 4.1.2 | MIT | github.com/moxystudio/node-proper-lockfile |
 | `semver` | 7.8.0 | ISC | github.com/npm/node-semver |
 | `typebox` | 1.3.11 | MIT | github.com/sinclairzx81/typebox |
-| `undici` | 8.9.0 | MIT | github.com/nodejs/undici |
+| `undici` | 8.12.3 | MIT | github.com/nodejs/undici |
 | `yaml` | 2.9.0 | ISC | github.com/eemeli/yaml |

@@ -87,8 +87,10 @@ export type PackageSource =
 	  };
 
 export type ApprovalMode = "ask" | "session_skip" | "always_skip";
+export type SecurityMode = "manual" | "agent" | "full";
 
 export interface HarnessSettings {
+ securityMode?: SecurityMode;
 	/**
 	 * Confirmation preference for ordinary asks. `session_skip` lives only in
 	 * session memory, `always_skip` persists in the global settings file.
@@ -735,6 +737,16 @@ export class SettingsManager {
 	getApprovalMode(): ApprovalMode {
 		return this.settings.harness?.approvalMode === "always_skip" ? "always_skip" : "ask";
 	}
+
+ getSecurityMode():SecurityMode {
+  const mode=this.globalSettings.harness?.securityMode;
+  return mode==="agent"||mode==="full"?mode:"manual";
+ }
+ setSecurityMode(mode:SecurityMode):void {
+  if(!["manual","agent","full"].includes(mode))throw new Error("审批策略必须为manual、agent或full。");
+  this.globalSettings.harness={...(this.globalSettings.harness ?? {}),securityMode:mode};
+  this.markModified("harness");this.save();
+ }
 
 	setApprovalMode(mode: ApprovalMode): void {
 		this.globalSettings.harness = { ...(this.globalSettings.harness ?? {}), approvalMode: mode };

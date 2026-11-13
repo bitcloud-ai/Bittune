@@ -1,3 +1,4 @@
+import type {SecurityMode} from "../harness/security.ts";
 export interface BittuneConfigureOptions {
 	baseUrl?: string;
 	modelId?: string;
@@ -26,7 +27,8 @@ export type BittuneCliInvocation =
 	| { kind: "doctor" }
 	| { kind: "install"; options: BittuneInstallOptions }
 	| { kind: "configure"; options: BittuneConfigureOptions }
-	| { kind: "interactive"; sessionId?: string; message?: string };
+	| { kind: "interactive"; sessionId?: string; message?: string; securityMode?:SecurityMode }
+ | {kind:"workflow";command:string;args:string[]};
 
 const CONFIGURE_OPTIONS: Readonly<Record<string, keyof BittuneConfigureOptions>> = {
 	"--base-url": "baseUrl",
@@ -72,10 +74,10 @@ function parseInteractive(args: string[]): BittuneCliInvocation {
 	const messages: string[] = [];
 	for (let index = 0; index < args.length; index += 1) {
 		const arg = args[index]!;
-		if (arg === "--session") {
-			if (values.has(arg)) throw usageError("Option \"--session\" may only be specified once.");
+		if (arg === "--session" || arg === "--approval") {
+			if (values.has(arg)) throw usageError(`Option "${arg}" may only be specified once.`);
 			const value = args[index + 1];
-			if (value === undefined || value.startsWith("-")) throw usageError("Option \"--session\" requires a value.");
+			if (value === undefined || value.startsWith("-")) throw usageError(`Option "${arg}" requires a value.`);
 			values.set(arg, value);
 			index += 1;
 			continue;
@@ -84,13 +86,14 @@ function parseInteractive(args: string[]): BittuneCliInvocation {
 		messages.push(arg);
 	}
 	const sessionId = values.get("--session");
+ const securityMode=values.get("--approval");if(securityMode&&!["manual","agent","full"].includes(securityMode))throw usageError("审批策略必须为manual、agent或full。");
 	return {
 		kind: "interactive",
+        ...(securityMode?{securityMode:securityMode as SecurityMode}:{}),
 		...(sessionId ? { sessionId } : {}),
 		...(messages.length > 0 ? { message: messages.join(" ") } : {}),
 	};
 }
-
 
 function parseInstall(args: string[]): BittuneCliInvocation {
 	if (args.length === 1 && (args[0] === "--help" || args[0] === "-h")) return { kind: "help" };
@@ -119,12 +122,6 @@ function parseInstall(args: string[]): BittuneCliInvocation {
 	return { kind: "install", options };
 }
 
-function parseBittuneCliArgumentsInner(command: string, rest: string[]): BittuneCliInvocation | undefined {
-	if (command === "configure") return parseConfigure(rest);
-	if (command === "install") return parseInstall(rest);
-	return undefined;
-}
-
 export function parseBittuneCliArguments(argv: string[]): BittuneCliInvocation {
 	const [command, ...args] = argv;
 	if (command === undefined) return { kind: "interactive" };
@@ -136,8 +133,9 @@ export function parseBittuneCliArguments(argv: string[]): BittuneCliInvocation {
 		if (args.length > 0) throw usageError(`Unexpected argument \"${args[0]}\" for version.`);
 		return { kind: "version" };
 	}
-	const named = parseBittuneCliArgumentsInner(command, args);
-	if (named) return named;
+	if (command === "configure") return parseConfigure(args);
+	if (command === "install") return parseInstall(args);
+	if(["task","runtime","tune","accept","report","compare","security"].includes(command))return {kind:"workflow",command,args};
 	if (command === "doctor") {
 		if (args.length > 0) throw usageError("The doctor command does not accept arguments.");
 		return { kind: "doctor" };

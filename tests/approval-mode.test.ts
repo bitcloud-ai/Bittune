@@ -126,3 +126,32 @@ test("runtime: 确认跳过后 ex、危险场景仍逐一核对", () => {
 	assert.equal(blocked.confirmation, "explicit");
 	assert.equal(resolveApprovalSkip(blocked.confirmation, "always_skip", false), false);
 });
+// The profile layer reuses Pi confirmations; Core/policy hard denies are unchanged.
+test("三档审批：人工确认、独立代审与范围内自动批准", async () => {
+  const {createApprovalController}=await import("../packages/bittune-runtime/src/harness/security.ts");
+  let human=0,review=0;
+  const request={title:"启动受管服务",message:"冻结计划与预算已保存"};
+  const ask=async()=>{human++;return true;};
+  for(const mode of ["manual","agent","full"] as const){
+    const approve=createApprovalController({mode:()=>mode,review:async()=>{review++;return {decision:"approve",reason:"在任务范围内"};}});
+    assert.equal(await approve(request,ask),true);
+  }
+  assert.equal(human,1);assert.equal(review,1);
+  for(const decision of ["deny","ask"] as const){
+    const approve=createApprovalController({mode:()=>"agent",review:async()=>({decision,reason:"核对范围"})});
+    assert.equal(await approve(request,ask),decision==="ask");
+  }
+  const full=createApprovalController({mode:()=>"full",review:async()=>{throw Error("不应调用");}});
+  assert.equal(await full({...request,forceHuman:true},ask),true);
+  assert.equal(await full({...request,signal:AbortSignal.abort()},ask),false);
+  assert.equal(human,3);
+});
+test("三档设置：项目不能提权，旧跳过偏好不升级完全模式", async () => {
+  const storage=new InMemorySettingsStorage();
+  storage.withLock("global",()=>JSON.stringify({harness:{approvalMode:"always_skip"}}));
+  storage.withLock("project",()=>JSON.stringify({harness:{securityMode:"full"}}));
+  const settings=SettingsManager.fromStorage(storage);
+  assert.equal(settings.getSecurityMode(),"manual");
+  settings.setSecurityMode("agent");await settings.flush();
+  assert.equal(SettingsManager.fromStorage(storage).getSecurityMode(),"agent");
+});

@@ -13,6 +13,8 @@ description: 准备引擎镜像
 
 ```text
 scripts/prepare-engine.sh <vllm|sglang> [官方仓库@sha256:精确摘要]
+scripts/prepare-engine.sh <vllm|sglang> 官方仓库@sha256:精确摘要 export-oci 绝对输出目录
+scripts/prepare-engine.sh <vllm|sglang> 官方仓库@sha256:精确摘要 import-oci 绝对制品目录
 ```
 
 - 第一参数选 `vllm` 或 `sglang`。其它引擎交给核心 Agent 处理。
@@ -21,10 +23,17 @@ scripts/prepare-engine.sh <vllm|sglang> [官方仓库@sha256:精确摘要]
 - 省略第二参数保留默认版本兼容路径；默认版本不满足目标模型时，先调查合适的
   固定版本和 digest。版本支持与本机实跑是不同证据，不把下载成功说成能部署。
 - 网络属于 Runtime Policy 的确认项。用户拒绝后停止，不要换镜像源绕过。
+- 离线制品准备使用 `export-oci`，调用配置好的 crane v0.20.6，仅导出 Linux/amd64
+  官方固定摘要；保留原始 manifest 和压缩层，核验后交由目标节点导入。
+
+- 离线导入使用 `import-oci`，先验证全部OCI摘要，再用配置好的本机回环 registry
+  让指定 Docker daemon 按原官方摘要拉入；daemon 的回环镜像源须由管理员预先配置，
+  技能不修改 daemon、不启动模型、不从已有镜像缓存替代制品。
 
 ## 成功
 
-报告本机已经有该引擎镜像。不要调用部署、不要启动服务。把结果交给核心 Agent。
+普通准备报告本机已存在镜像；OCI导出仅报告制品已核验，不代表目标节点已导入。
+不要调用部署、不要启动服务。把结果交给核心 Agent。
 
 ## 失败
 

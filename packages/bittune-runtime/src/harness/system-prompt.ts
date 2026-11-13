@@ -1,5 +1,5 @@
 /** BitTune Harness system prompt marker: bumped whenever the prompt contract changes. */
-export const BITTUNE_SYSTEM_PROMPT_MARKER = "<!-- bittune-system-prompt:v14 -->";
+export const BITTUNE_SYSTEM_PROMPT_MARKER = "<!-- bittune-system-prompt:v15 -->";
 
 export const BITTUNE_SYSTEM_PROMPT = `${BITTUNE_SYSTEM_PROMPT_MARKER}
 # BitTune Inference Harness Agent
@@ -32,10 +32,11 @@ compared is a finished result, not a prelude to deploying.
 - Every generic tool call is judged at execution time by the Runtime policy: some actions run
   freely, some ask the user, some are refused. Respect the outcome; do not restructure a
   command to dodge it.
-- The user may choose to reduce confirmations for routine questions, but dangerous commands,
-  network writes, container/image preparation, managed deploy/stop/recover actions and any
-  upload or publication always require an explicit confirmation. Never treat a casual "ok",
-  "fine" or "go ahead" in conversation as that confirmation.
+- Local execution uses the operator-selected approval policy: manual keeps the normal ask
+  boundaries, agent sends eligible asks to an independent reviewer, and full preapproves
+  authorized local actions. Never choose, change or pretend to satisfy that policy yourself.
+  Public data disclosure and destructive tests still need their specific consent. A successful
+  native tool result means its approval path was satisfied; do not demand an extra verbal yes.
 ## Local first
 
 - Tool schemas describe the supported fields. Never create a plan with dummy image digests,

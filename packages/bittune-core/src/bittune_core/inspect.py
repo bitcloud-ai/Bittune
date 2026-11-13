@@ -134,7 +134,7 @@ def _probe_host(probes: list[dict[str, Any]], cancellation: Any) -> dict[str, An
     try:
         lscpu = run_command(["lscpu"], timeout_seconds=10, cancellation=cancellation)
         cpu_rows = [line.split(":", 1) for line in lscpu["stdout"].splitlines() if ":" in line]
-        host["cpu"] = {key.strip().split(" ")[0]: value.strip() for key, value in cpu_rows}
+        host["cpu"] = {key.strip(): value.strip() for key, value in cpu_rows}
     except ContractError:
         host["cpu"] = {}
     try:
@@ -298,3 +298,36 @@ def inspect_service(params: dict[str, Any], context: dict[str, Any]) -> dict[str
         if untracked:
             summary += f"另有 {len(untracked)} 个未跟踪容器，未写入服务事实。"
         return run.success(summary, {"services": services, "untracked": untracked})
+
+
+def probe_gpu_processes(cancellation=None) -> dict[str, Any]:
+    result = run_command(["nvidia-smi", "--query-compute-apps=pid,process_name,used_memory", "--format=csv,noheader"], timeout_seconds=15, cancellation=cancellation)
+    if result["exit_code"] != 0:
+        raise ContractError("resource_status_unavailable", "无法确认GPU进程状态，不开始部署。")
+    rows = [line for line in result["stdout"].splitlines() if line.strip() and "No running processes" not in line]
+    return {"busy": bool(rows), "process_count": len(rows), "raw": result["stdout"]}
+
+
+def gpu_activity(params: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    with ManagedRun(context["store"], "inspect_environment", {"activity_only": True}, context["session_id"], context) as run:
+        data = probe_gpu_processes(context["cancellation"])
+        source_id = params.get("service_instance_id")
+        if source_id:
+            from bittune_core.services import _inspect_container, _require_label_proof
+            service = context["store"].get_fact("service_instance", source_id)["payload"]
+            if service.get("ownership") != "managed" or not service.get("container_id"):
+                raise ContractError("service_not_managed", "只能核对所选受管运行时的GPU归属。")
+            state = _inspect_container(service["container_id"], context["cancellation"])
+            _require_label_proof(service, state)
+            if not state.get("running"):
+                raise ContractError("resource_status_unavailable", "所选基准容器未运行，不能开始调优。")
+            top = run_command(["docker", "top", service["container_id"], "-eo", "pid"], timeout_seconds=15, cancellation=context["cancellation"])
+            if top["exit_code"] != 0:
+                raise ContractError("resource_status_unavailable", "无法确认所选容器进程归属。")
+            owned = {line.strip() for line in top["stdout"].splitlines() if line.strip().isdigit()}
+            gpu = {line.split(",", 1)[0].strip() for line in data["raw"].splitlines() if line.split(",", 1)[0].strip().isdigit()}
+            data["other_busy"] = bool(gpu - owned)
+            data["other_process_count"] = len(gpu - owned)
+            data["source_process_count"] = len(gpu & owned)
+        run.artifact("gpu-processes", data.pop("raw"))
+        return run.success("已读取实时GPU进程占用。", data)
