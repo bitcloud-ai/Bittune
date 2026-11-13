@@ -31,15 +31,17 @@ def inspect_image_cli(kind: Any, docker_runner, run_reference: str) -> dict[str,
     """
     adapter = require_adapter(kind)
     if kind == "vllm":
+        # vLLM supports an explicit CPU platform for CLI/CI on accelerator wheels.
+        # Discover flags without requiring GPU access or loading a model.
         help_result = docker_runner(
-            ["docker", "run", "--rm", "--pull=never", "--network=none", "--cap-drop=ALL", "--pids-limit", "256", "--entrypoint", "vllm", run_reference, "serve", "--help=all"],
+            ["docker", "run", "--rm", "--pull=never", "--network=none", "--env", "VLLM_TARGET_DEVICE=cpu", "--cap-drop=ALL", "--pids-limit", "256", "--entrypoint", "vllm", run_reference, "serve", "--help=all"],
             timeout_seconds=120,
         )
         flags = _extract_flags(f"{help_result['stdout']}\n{help_result['stderr']}")
         diagnostics = f"$ vllm serve --help=all\n{help_result['stdout']}\n{help_result['stderr']}"
         if help_result["exit_code"] != 0 or not _has_required(adapter, flags):
             fallback = docker_runner(
-                ["docker", "run", "--rm", "--pull=never", "--network=none", "--cap-drop=ALL", "--pids-limit", "256", "--entrypoint", "vllm", run_reference, "serve", "--help"],
+                ["docker", "run", "--rm", "--pull=never", "--network=none", "--env", "VLLM_TARGET_DEVICE=cpu", "--cap-drop=ALL", "--pids-limit", "256", "--entrypoint", "vllm", run_reference, "serve", "--help"],
                 timeout_seconds=120,
             )
             flags = _extract_flags(f"{fallback['stdout']}\n{fallback['stderr']}")

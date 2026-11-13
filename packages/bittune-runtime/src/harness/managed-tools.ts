@@ -6,6 +6,7 @@
 	import { CoreClient, CoreError } from "./core-client.ts";
 		import { COPY, humanizeUserText, toolLabel } from "./tui/copy.ts";
 import { compactReportResult, type TaskScope } from "./task-scope.ts";
+import type {ApprovalRequest} from "./security.ts";
 
 /**
  * The BitTune managed tools. Schemas carry only business references and
@@ -97,7 +98,10 @@ const LOOPBACK_ENDPOINT = Type.Object(
 	{ additionalProperties: false, description: "仅用于外部回环端点；与 service_instance_id 二选一。已有受管服务 ID 时省略 endpoint" },
 );
 const SUITE_SUBJECT_FIELDS = {
-	intent: Type.Union([Type.Literal("performance_sweep"), Type.Literal("correctness"), Type.Literal("cache_pair"), Type.Literal("pd_planning")]),
+    correctness_pack_hash: Type.Optional(Type.String()), correctness_max_samples: Type.Optional(Type.Integer({minimum:1})), correctness_output_tokens: Type.Optional(Type.Integer({minimum:1,maximum:8192})),
+    scenario_id: Type.Optional(Type.String()), concurrency: Type.Optional(Type.Integer({minimum:1})), repeat: Type.Optional(Type.Integer({minimum:1})),
+    gpu_hourly_price: Type.Optional(Type.Number({minimum:0})), gpu_count: Type.Optional(Type.Integer({minimum:1,maximum:1024})), currency: Type.Optional(Type.String({pattern:"^[A-Z]{3}$"})),
+	intent: Type.Union([Type.Literal("performance_sweep"), Type.Literal("correctness"), Type.Literal("cache_pair"), Type.Literal("pd_planning"), Type.Literal("cost_planning")]),
 	profile_path: optionalString("自定义档案路径；省略则用内置短档案"),
 	package: Type.Optional(Type.Union([Type.Literal("short"), Type.Literal("full")])),
 	destructive: Type.Optional(Type.Boolean()),
@@ -184,7 +188,7 @@ const Schemas = {
 		Type.Object({ ...SUITE_SUBJECT_FIELDS, service_instance_id: Type.String({ description: "ready 状态的 managed 服务 ID" }) }, { additionalProperties: false }),
 		Type.Object({ ...SUITE_SUBJECT_FIELDS, endpoint: LOOPBACK_ENDPOINT }, { additionalProperties: false }),
 	]),
-	export_deliverable: Type.Object(
+	export_deliverable: Type.Union([Type.Object(
 		{
 			intent: Type.Union([Type.Literal("result_workbook"), Type.Literal("evidence_pack")]),
 			service_instance_id: Type.String({ description: "受管服务 ID" }),
@@ -193,7 +197,10 @@ const Schemas = {
 			benchmark_result_ids: Type.Optional(Type.Array(Type.String(), { minItems: 1, description: "导出该服务的指定单点实测；与suite_result_id二选一" })),
 		},
 		{ additionalProperties: false },
-	),
+	), Type.Object({
+		intent: Type.Union([Type.Literal("report_bundle"), Type.Literal("signed_pdf")]),
+		report_id: Type.String({ description: "精确选择已有报告；覆盖其明确引用的全部工作点，不部署或测量" }),
+	}, { additionalProperties: false })]),
 	compare_results: Type.Union([
 		Type.Object(
 			{
@@ -221,6 +228,8 @@ const Schemas = {
 	]),
 	write_report: Type.Object(
 		{
+			experiment_selections: Type.Optional(Type.Array(Type.String(),{minItems:1,uniqueItems:true,description:"extends_report_id模式追加已有原生Experiment，不改原引用"})),
+			extends_report_id: optionalString("保留原报告全部引用，只追加suite_selections新套件并生成新版本；不能与based_on_report_id或手写引用合用"),
 			based_on_report_id: optionalString("原样保留已有报告全部引用，只修改文本；禁止重传引用数组"),
 			suite_selections: Type.Optional(Type.Array(Type.Object({
 				suite_result_id: Type.String(), metrics: Type.Array(Type.String(), { minItems: 1, uniqueItems: true }),
@@ -289,9 +298,9 @@ export const MANAGED_TOOL_DESCRIPTIONS: Record<ManagedToolName, string> = {
 	deploy_service: "受管 Docker 生命周期：start 只接受 frozen plan；stop/recover 只作用于 Core 拥有（label+本地记录双重证明）的服务。",
 	benchmark_service: "单点低负载验证或规范化压测。受管服务只传 service_instance_id，省略 endpoint；外部回环端点只传 endpoint，省略 service_instance_id，二选一。生成带 workload hash 与原始 Artifact 的 BenchmarkResult；回环结果不能称为 BitTune 实测。",
 	benchmark_suite: "用户选择了套件验收范围后按档案扫描、正确性、缓存或卡配推算。受管服务只传 service_instance_id；外部回环端点只传 endpoint，两者互斥。单点生成验证使用 benchmark_service，不扩展到套件；回环结果不能称为 BitTune 实测。",
-	export_deliverable: "把已有扫描事实写成工作簿或证据包，不重新测量。",
+	export_deliverable: "按服务导出已有工作簿/证据包；按report_id导出完整报告包或本机签名PDF，覆盖报告全部来源，不重新测量。两种选择的字段不能混用。",
 	compare_results: "比较多个单点结果，或比较同一档案同一场景同一并发的扫描工作点。",
-	write_report: "创建可追溯 Report：Core 校验叙述与事实引用、渲染指标、写出 Markdown Artifact。",
+	write_report: "创建可追溯报告，Core校验引用与指标并生成Markdown主报告，技术资料另存详情。标题用模型名称与工作用途；结论先说明完成情况和适用限制，范围用两句话交代模型、硬件及测试条件，叙述以简洁中文概括发现和限制。正文不粘贴代码、JSON、日志、完整ID、哈希或本机路径，不堆砌原始参数名；技术身份放references，实测数值放结构化claims。保留短样本、不可比和未测量等实际限制，不能把流程通过写成生产性能达标。",
 	inspect_records: "按 ID、硬件、模型、runtime_kind 或 workload hash 回查本地 Run、Artifact、扫描事实与报告。",
 };
 
@@ -301,6 +310,7 @@ export const MANAGED_TOOL_DESCRIPTIONS: Record<ManagedToolName, string> = {
 	}
 
 	export interface ManagedToolRuntimeOptions {
+ approve?: (request:ApprovalRequest,human:()=>Promise<boolean>)=>Promise<boolean>;
 		taskScope?: TaskScope;
 		/** Called before freeze/start/stop/recover; must show the object and impact. */
 		askApproval?: (title: string, message: string) => Promise<boolean>;
@@ -471,11 +481,10 @@ function makeExecute(
 					: "";
 				const confirmMessage = CONFIRMED_ACTIONS[actionKey];
 				if (confirmMessage) {
-					const approved = runtimeOptions.askApproval
-						? await runtimeOptions.askApproval(COPY.confirm.managed, confirmMessage)
-						: await ctx.ui.confirm(COPY.confirm.managed, confirmMessage);
+					const human=()=>runtimeOptions.askApproval?runtimeOptions.askApproval(COPY.confirm.managed,confirmMessage):ctx.ui.confirm(COPY.confirm.managed,confirmMessage);
+                    const approved=runtimeOptions.approve?await runtimeOptions.approve({title:COPY.confirm.managed,message:confirmMessage,tool:toolName,params,signal},human):await human();
 					if (!approved) {
-						return { content: [{ type: "text", text: "已取消：用户未确认该受管操作，未调用 Core。" }], details: { code: "user_declined" } };
+                        return { content: [{ type: "text", text: "审批未通过：未调用Core执行此操作。" }], details: { code: runtimeOptions.approve ? "approval_denied" : "user_declined" } };
 					}
 				}
 						const requestParams = { ...params };
@@ -492,7 +501,7 @@ function makeExecute(
 								? await runtimeOptions.askApproval(COPY.confirm.managed, message)
 								: await ctx.ui.confirm(COPY.confirm.managed, message);
 							if (!approved) {
-								return { content: [{ type: "text", text: "已取消：用户未确认该受管操作，未调用 Core。" }], details: { code: "user_declined" } };
+								return { content: [{ type: "text", text: "审批未通过：未调用Core执行此操作。" }], details: { code: "user_declined" } };
 							}
 						}
 						if (toolName === "benchmark_suite") {
@@ -505,7 +514,7 @@ function makeExecute(
 					onProgress: (message) => onUpdate?.({ content: [{ type: "text", text: message }], details: {} }),
 				});
 				const text = summarizeManagedResult(toolName, params, data);
-					const response = toolName === "write_report" && (params.based_on_report_id || params.suite_selections) ? compactReportResult(data) : data;
+					const response = toolName === "write_report" && (params.based_on_report_id || params.extends_report_id || params.suite_selections) ? compactReportResult(data) : data;
 					return { content: [{ type: "text", text }, { type: "text", text: JSON.stringify(response) }], details: response };
 			} catch (error) {
 				return errorResult(error instanceof Error ? error : new Error(String(error)));

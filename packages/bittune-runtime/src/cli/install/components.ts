@@ -211,7 +211,13 @@ async function writeInstallMarker(ctx: InstallContext, updates: { distSha?: stri
   await writeFile(join(agentRoot(ctx), INSTALL_MARKER), `${JSON.stringify(marker)}\n`, { mode: 0o644 });
 }
 
-const INCOMING_DIST_ENTRY = "package/dist/bittune.js";
+const INCOMING_DIST_ENTRIES = ["package/dist/bittune.js", "package/dist/task-worker.js"];
+
+// A worker-only update must invalidate the install marker too.
+async function agentDistSha(dist: string): Promise<string> {
+  const hashes = await Promise.all(["bittune.js", "task-worker.js"].map(name => fileSha256(join(dist, name))));
+  return createHash("sha256").update(hashes.join(":" )).digest("hex");
+}
 
 /** GNU tar on Windows chokes on `C:\...` drive paths; forward slashes work. */
 function pathForTar(value: string): string {
@@ -231,11 +237,11 @@ export async function resolveIncomingAgentDistSha(ctx: InstallContext): Promise<
   if (ctx.sourceKind === "bundle") {
     const dist = join(resolve(ctx.payloadPath), "agent", "dist", "bittune.js");
     if (!existsSync(dist)) throw new Error("离线包缺少 agent/dist/bittune.js。");
-    digest = await fileSha256(dist);
+    digest = await agentDistSha(dirname(dist));
   } else {
     const stage = ctx.stageAgentDir ? resolve(ctx.stageAgentDir) : "";
     if (stage && existsSync(join(stage, "dist", "bittune.js"))) {
-      digest = await fileSha256(join(stage, "dist", "bittune.js"));
+      digest = await agentDistSha(join(stage, "dist"));
     } else {
       const archive = resolve(ctx.payloadPath);
       const temporary = join(ctx.installRoot, "staging", `payload-hash-${uniqueStamp()}`);
@@ -245,13 +251,13 @@ export async function resolveIncomingAgentDistSha(ctx: InstallContext): Promise<
         // platforms; the payload layout is identical on Linux.
         const extracted = await runCommand(
           "tar",
-          ["-xzf", basename(archive), "-C", pathForTar(temporary), INCOMING_DIST_ENTRY],
+          ["-xzf", basename(archive), "-C", pathForTar(temporary), ...INCOMING_DIST_ENTRIES],
           { cwd: dirname(archive), timeoutMs: 120_000, maxBytes: 512 * 1024 },
         );
-        if (extracted.exit_code !== 0 || !existsSync(join(temporary, INCOMING_DIST_ENTRY))) {
-          throw new Error("发行包缺少 package/dist/bittune.js，无法核对更新内容。");
+        if (extracted.exit_code !== 0 || !INCOMING_DIST_ENTRIES.every(entry => existsSync(join(temporary, entry)))) {
+          throw new Error("发行包缺少 CLI 或共享任务进程，无法核对更新内容。");
         }
-        digest = await fileSha256(join(temporary, INCOMING_DIST_ENTRY));
+        digest = await agentDistSha(join(temporary, "package", "dist"));
       } finally {
         await rm(temporary, { recursive: true, force: true });
       }
@@ -273,7 +279,7 @@ export async function resolveCoreWheelSha(ctx: InstallContext): Promise<string> 
 export function agentPayloadComplete(root: string): boolean {
   const photon = join(root, "dist", "node_modules", "@silvia-odwyer", "photon-node");
   const skills = join(root, "skills");
-  if (!existsSync(join(root, "dist", "bittune.js")) || !existsSync(join(root, "package.json"))) return false;
+  if (!existsSync(join(root, "dist", "bittune.js")) || !existsSync(join(root, "dist", "task-worker.js")) || !existsSync(join(root, "package.json"))) return false;
   if (!existsSync(join(photon, "photon_rs.js")) || !existsSync(join(photon, "photon_rs_bg.wasm"))) return false;
   if (!existsSync(skills)) return false;
   try {
@@ -394,7 +400,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
         return "pending";
       }
       const marker = await readInstallMarker(root);
-      const installedDistSha = await fileSha256(join(root, "dist", "bittune.js"));
+      const installedDistSha = await agentDistSha(join(root, "dist"));
       const incomingDistSha = await resolveIncomingAgentDistSha(ctx);
       return agentMarkerSatisfied(marker, installedDistSha, incomingDistSha, VERSION) ? "satisfied" : "pending";
     },

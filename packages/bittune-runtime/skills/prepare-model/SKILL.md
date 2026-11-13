@@ -12,12 +12,13 @@ description: 准备本机模型权重
 只跑本 Skill 目录下的脚本：
 
 ```text
-scripts/prepare-model.sh <model_id> [revision]
+scripts/prepare-model.sh <model_id> [revision] [huggingface|modelscope]
 ```
 
-- `<model_id>` 是 Hugging Face 仓库 id，例如 `Qwen/Qwen2.5-7B-Instruct`。
+- `<model_id>` 是所选来源的仓库 id，例如 `Qwen/Qwen2.5-7B-Instruct`。
 - `[revision]` 可选，钉死提交或 tag。省略则用仓库默认修订。
-- 下载源来自本机已有的 Hugging Face CLI（`hf download`）。不要手写下载地址，不要换别的下载器。
+- 来源默认采用节点配置 `BITTUNE_MODEL_SOURCE`，未配置时用 Hugging Face。显式选择 ModelScope 时，由其官方 SDK 下载；Hugging Face 沿用 `hf download`。
+- 沿用用户选定的仓库和来源，不自动切换，不手写下载地址。
 - 工作目录由脚本选在用户模型缓存；不得写入 BitTune 保护根（`~/.bittune` 及其 Core 目录）。
 - 网络属于 Runtime Policy 的确认项。用户拒绝网络后停止，不要换命令绕过。
 
@@ -27,4 +28,4 @@ scripts/prepare-model.sh <model_id> [revision]
 
 ## 失败
 
-说明缺什么后停止：没有 `hf` CLI、磁盘不够、网络确认被拒、模型 id 不合法。不要改参数重试绕过，也不要自己拼下载地址。
+说明缺什么后停止：所选来源的 CLI/SDK 缺失、磁盘不够、网络确认被拒或模型 id 不合法。不要改参数重试绕过，也不要自己拼下载地址。

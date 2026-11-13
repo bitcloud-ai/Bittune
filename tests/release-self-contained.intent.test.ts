@@ -39,6 +39,8 @@ test("发行完全体基线意图：photon 整包 vendor，wasm 与 photon_rs.js
 			mkdirSync(join(root, "skills"), { recursive: true });
 			assert.equal(agentPayloadComplete(root), false);
 			writeFileSync(join(root, "skills", "prepare-model.md"), "# skill");
+			assert.equal(agentPayloadComplete(root), false);
+			writeFileSync(join(root, "dist", "task-worker.js"), "console.log(1)");
 			assert.equal(agentPayloadComplete(root), true);
 		} finally {
 			rmSync(root, { recursive: true, force: true });

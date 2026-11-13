@@ -41,6 +41,9 @@ _HEALTHY_METRICS = (
 
 def benchmark_suite(params: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     intent = params.get("intent")
+    if intent == "cost_planning":
+        from bittune_core.cost_projection import run_cost_planning
+        return run_cost_planning(params, context)
     if intent == "correctness":
         from bittune_core.correctness import run_correctness
 

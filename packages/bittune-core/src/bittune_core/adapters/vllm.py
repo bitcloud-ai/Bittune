@@ -141,7 +141,8 @@ def compile_engine_args(configuration: dict[str, Any], supported_flags: list[str
 
 def compile_docker_gpu_args(configuration: dict[str, Any]) -> list[str]:
     devices = materialize(configuration)["gpu_device_ids"]
-    return ["--gpus", f"device={','.join(str(item) for item in devices)}" if devices else "all"]
+    value = f"device={','.join(str(item) for item in devices)}" if devices else "all"
+    return ["--gpus", f'"{value}"' if len(devices) > 1 else value]
 
 
 def launch_args(model_path: str, model_id: str, engine_args: list[str]) -> list[str]:

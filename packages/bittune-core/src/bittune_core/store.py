@@ -223,10 +223,15 @@ def _path_inside(root: Path, relative: str) -> Path:
 class CoreStore:
     """Owns the database connection, artifact files and staging directory."""
 
-    def __init__(self, home: str | os.PathLike[str] | None = None):
+    def __init__(self, home: str | os.PathLike[str] | None = None, *, read_only: bool = False):
         self.home = Path(home) if home else core_home()
         self.artifact_root = self.home / "artifacts"
         self.staging_root = self.home / "staging"
+        if read_only:
+            self.db = sqlite3.connect((self.home / "bittune.db").resolve().as_uri() + "?mode=ro", uri=True, timeout=5.0, check_same_thread=False)
+            self.db.row_factory = sqlite3.Row
+            self.db.execute("PRAGMA query_only = ON")
+            return
         self.home.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.artifact_root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.staging_root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -320,6 +325,26 @@ class CoreStore:
                 usage['points'] += reservation['points']
                 usage['requests'] += reservation['requests']
         return usage
+
+    def scoped_result_ids(self, scope_hashes: set[str], session_id: str) -> dict[str, set[str]]:
+        """Restore identities produced by this native session, never an archive's references."""
+        ids = {"plans": set(), "services": set(), "records": set()}
+        runs = []
+        for row in self.db.execute("SELECT run_id FROM runs WHERE session_id = ? AND action_path = 'managed'", (session_id,)).fetchall():
+            run = self.get_run(row["run_id"])
+            if run["input"].get("_task_scope_hash") not in scope_hashes:
+                continue
+            runs.append(run["run_id"])
+            ids["records"].add(run["run_id"])
+            ids["records"].update(a["artifact_id"] for a in run["artifacts"])
+        if runs:
+            placeholders = ",".join("?" for _ in runs)
+            for kind, (table, column, _) in _FACT_TABLES.items():
+                for row in self.db.execute(f"SELECT {column} FROM {table} WHERE source_run_id IN ({placeholders})", runs).fetchall():
+                    fact = self.get_fact(kind, row[column])
+                    bucket = "plans" if kind == "deployment_plan" else "services" if kind == "service_instance" else "records"
+                    ids[bucket].add(fact["id"])
+        return ids
 
     def finish_run(self, run_id: str, status: str, observation: dict[str, Any]) -> None:
         if status not in RUN_STATUSES or status == "running":

@@ -14,6 +14,7 @@ import uuid
 from typing import Any
 
 from bittune_core.adapters import inspect_image_cli, require_adapter
+from bittune_core.inspect import probe_gpu_processes
 from bittune_core.contracts import ContractError
 from bittune_core.plans import model_path_in_container, resolve_image, resolve_model_snapshot, validate_plan
 from bittune_core.process import run_command, wait_interval
@@ -111,6 +112,11 @@ def _start(params: dict[str, Any], store: CoreStore, run: ManagedRun, cancellati
         launch=adapter.launch_args(model_path_in_container(mount), model_ref["model_id"], engine_args),
     )
     run.progress(f"启动受管 {runtime_spec['runtime_kind']} 容器 {container_name}…")
+    if task_scope is not None and task_scope.document.get("require_idle_gpu"):
+        activity = probe_gpu_processes(cancellation)
+        run.artifact("pre-start-gpu-processes", activity["raw"])
+        if activity["busy"]:
+            raise ContractError("resource_busy", "GPU仍有计算进程，未启动新容器；等待空闲后再明确执行。")
     started = run_command(layout, timeout_seconds=120, max_bytes=1024 * 1024, cancellation=cancellation)
     run.artifact("docker-run", f"$ {' '.join(layout)}\n{started['stdout']}\n{started['stderr']}")
     if started["exit_code"] != 0:
@@ -267,12 +273,17 @@ def _recover(service: dict[str, Any], store: CoreStore, run: ManagedRun, cancell
         port = _loopback_port(inspection)
         service["endpoint"] = f"http://127.0.0.1:{port}"
         service["port"] = port
+        # Docker running and an API-ready model are different observations.
+        # Reuse the startup probe without restarting or generating tokens.
+        _, ready, _ = _wait_ready(service, 1, run, cancellation)
+        if ready:
+            service["observed_state"] = "ready"
     else:
         warnings = [f"容器 {container_id} 当前未运行（{inspection.get('status')}）；本地记录已与真实状态对齐。若需服务，请检查日志后用 frozen plan 重新 start。"]
         store.put_service_instance(service, run.run_id)
         return run.success(f"服务 {service_id} 已与真实容器状态对齐（{inspection['status']}）。", {"service": service}, warnings)
     store.put_service_instance(service, run.run_id)
-    return run.success(f"服务 {service_id} 已恢复对齐（{inspection['status']}，endpoint {service['endpoint']}）。", {"service": service})
+    return run.success(f"服务 {service_id} 已恢复对齐（{service['observed_state']}，endpoint {service['endpoint']}）。", {"service": service})
 
 
 def _docker_run_args(*, runtime_kind: str, container_name: str, service_id: str, plan_id: str, gpu_args: list[str], mount_root: str, entrypoint: str | None, image: str, entrypoint_args: list[str], launch: list[str]) -> list[str]:

@@ -39,8 +39,8 @@ def plan_deployment(params: dict[str, Any], context: dict[str, Any]) -> dict[str
         action = params.get("action")
         if action == "create":
             return _create(params, store, run, cancellation)
-        if "prior_source" in params or "based_on_plan_id" in params:
-            raise ContractError("invalid_input", "validate 和 freeze 不接收 prior_source 或 based_on_plan_id。")
+        if "prior_source" in params or "based_on_plan_id" in params or "recommendation_artifact_id" in params:
+            raise ContractError("invalid_input", "validate 和 freeze 不接收 prior_source、based_on_plan_id 或 recommendation_artifact_id。")
         plan_id = params.get("plan_id")
         if not isinstance(plan_id, str) or not plan_id.startswith("plan-"):
             raise ContractError("invalid_input", "validate/freeze 需要 plan_id。", remediation="先用 action=create 建立 draft 计划。")

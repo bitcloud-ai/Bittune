@@ -309,11 +309,12 @@ class BenchmarkReportTest(unittest.TestCase):
         markdown = self.core.store.read_artifact_excerpt(report["artifact_ids"][0], max_bytes=65536)["text"]
         self.assertIn("12.5 req/s", markdown)
         self.assertIn("98.00 %", markdown)
-        self.assertIn(benchmark["benchmark_result_id"], markdown)
+        details = self.core.store.read_artifact_excerpt(report["artifact_ids"][1], max_bytes=65536)["text"]
+        self.assertIn(benchmark["benchmark_result_id"], details)
         self.assertIn("估算", markdown)
-        self.assertIn("## 环境", markdown)
+        self.assertIn("## 测试环境", markdown)
         self.assertIn("2×GPU", markdown)
-        self.assertIn(snapshot["hardware_snapshot_id"], markdown)
+        self.assertIn(snapshot["hardware_snapshot_id"], details)
         with self.assertRaises(ContractError) as raised:
             self.core.request(write_report, {
                 "title": "坏报告",
@@ -389,7 +390,8 @@ class BenchmarkReportTest(unittest.TestCase):
         )
         markdown = self.core.store.read_artifact_excerpt(report_result["data"]["report"]["artifact_ids"][0], max_bytes=65536)["text"]
         self.assertIn("比较", markdown)
-        self.assertIn(experiment["experiment_id"], markdown)
+        details = self.core.store.read_artifact_excerpt(report_result["data"]["report"]["artifact_ids"][1], max_bytes=65536)["text"]
+        self.assertIn(experiment["experiment_id"], details)
 
 
 if __name__ == "__main__":

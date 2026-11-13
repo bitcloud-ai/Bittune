@@ -121,3 +121,17 @@ Run、Artifact 与事实。用户确认发生在冻结计划与启停受管服�
 不再静默忽略。性能断言由 `metric_claims` 引用实测字段渲染。冻结 workload 中的
 声明值与实际 argv 转发分别记录，未转发项不能描述成已应用。清理完成结论需要
 停止后的检查证据；Core 停止服务后会重新读取该受管容器状态并保存 Artifact。
+
+
+## 本地后台任务
+
+新版CLI通过后台进程管理部署、调优和验收，关闭终端后任务记录保留；任务结束后已部署的服务继续运行。
+
+- `bittune task --help`：任务创建、状态、继续、取消和确认。
+- `bittune security manual|agent|full`：选择手动、代理或完全审批，也可在创建任务时使用 `--approval`。
+- `bittune runtime --help`：服务、API地址、模型对话、显式停止和参数切换。
+- `bittune tune --help`：以选定的受管运行时作为原配置开始调优。
+- `bittune accept --help`：文本规则评测、输出统计和用户费率下的成本估算。
+- `bittune report --help`：查看报告，导出主Markdown与详细证据包，或创建保留来源的新版本。
+
+`--json`返回结构化结果，`--detach`提交后台任务；待确认的动作可使用 `task approve` 继续。任务完成不代表模型服务已停止。

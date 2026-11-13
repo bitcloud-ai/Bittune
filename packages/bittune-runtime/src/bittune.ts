@@ -1,3 +1,6 @@
+import type {SecurityMode,ApprovalDecision,ApprovalRequest} from "./harness/security.ts";
+import {resolveBittunePaths,type BittunePaths} from "./core/bittune-paths.ts";
+export {resolveBittunePaths,type BittunePaths} from "./core/bittune-paths.ts";
 import { existsSync, realpathSync } from "node:fs";
 import { chmod, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -18,17 +21,11 @@ import { parseBittuneCliArguments, type BittuneConfigureOptions } from "./cli/bi
 import { InteractiveMode } from "./modes/interactive/interactive-mode.ts";
 import { getPackageDir, VERSION } from "./config.ts";
 
-export interface BittunePaths {
-	root: string;
-	agent: string;
-	sessions: string;
-	state: string;
-	/** Python Core home (SQLite + artifacts + staging); default ~/.bittune/core. */
-	core: string;
-	logs: string;
-}
 
 	export interface CreateBittuneRuntimeOptions {
+      securityMode?:SecurityMode;
+      approvalContext?:()=>Record<string,unknown>;
+      onApprovalDecision?:(request:ApprovalRequest,decision:ApprovalDecision)=>void;
 	  cwd?: string;
 	  paths?: Partial<BittunePaths>;
 	  sessionId?: string;
@@ -52,28 +49,6 @@ export function resolveProductSkillsDir(): string {
 	return nextToModule;
 }
 
-function getEnvironmentPath(name: string): string | undefined {
-	const value = process.env[name]?.trim();
-	return value || undefined;
-}
-
-export function resolveBittunePaths(overrides: Partial<BittunePaths> = {}): BittunePaths {
-	const root = overrides.root ?? getEnvironmentPath("BITTUNE_HOME") ?? join(homedir(), ".bittune");
-	const agent =
-		overrides.agent ??
-		getEnvironmentPath("BITTUNE_AGENT_DIR") ??
-		getEnvironmentPath("BITTUNE_CODING_AGENT_DIR") ??
-		join(root, "agent");
-	return {
-		root,
-		agent,
-		sessions:
-			overrides.sessions ?? getEnvironmentPath("BITTUNE_SESSION_DIR") ?? join(agent, "sessions"),
-		state: overrides.state ?? getEnvironmentPath("BITTUNE_STATE_DIR") ?? join(root, "state"),
-		core: overrides.core ?? getEnvironmentPath("BITTUNE_CORE_HOME") ?? join(root, "core"),
-		logs: overrides.logs ?? getEnvironmentPath("BITTUNE_LOG_DIR") ?? join(root, "logs"),
-	};
-}
 
 async function ensureDirectories(paths: BittunePaths): Promise<void> {
 	await Promise.all([paths.agent, paths.sessions, paths.state, paths.core, paths.logs].map((path) => mkdir(path, { recursive: true })));
@@ -106,8 +81,8 @@ async function assertBittuneAgentConfigurationInitialized(agentDir: string): Pro
 	);
 }
 
-function createRuntimeFactory(paths: BittunePaths): CreateAgentSessionRuntimeFactory {
-	return async ({ cwd, agentDir, sessionManager, sessionStartEvent }) => {
+	function createRuntimeFactory(paths: BittunePaths, runtimeFlags: Pick<CreateBittuneRuntimeOptions,"securityMode"|"onApprovalDecision"|"approvalContext"> = {}): CreateAgentSessionRuntimeFactory {
+		return async ({ cwd, agentDir, sessionManager, sessionStartEvent }) => {
 		const diagnostics: AgentSessionRuntimeDiagnostic[] = [];
 		// The Core is session-scoped: same lifetime as this Runtime session,
 		// no daemon, no listening port. It must be able to start before any
@@ -125,6 +100,7 @@ function createRuntimeFactory(paths: BittunePaths): CreateAgentSessionRuntimeFac
             : null;
 			const availableTools = [...SESSION_BUILTIN_TOOL_NAMES, ...MANAGED_TOOL_NAMES, "investigate"];
 const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
+ let sessionSecurityMode=runtimeFlags.securityMode;
 				const modelRuntime = await ModelRuntime.create({
 				authPath: join(agentDir, "auth.json"),
 				modelsPath: join(agentDir, "models.json"),
@@ -148,7 +124,7 @@ const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: 
 						name: "bittune",
 							factory: createHarnessExtension({
 								// paths.core holds SQLite + artifacts
-								// and staging; it is listed explicitly on top of
+								// credentials; it is listed explicitly on top of
 								// the umbrella root so the deny list never
 								// depends on tree shape.
 	protectedRoots: [paths.root, paths.core],
@@ -160,7 +136,8 @@ const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: 
 									// The approval preference is global-only: settings
 									// never let a project file shadow it, and session
 									// skip lives inside the extension's memory.
-									approval: {
+									security:{get:()=>sessionSecurityMode ?? settingsManager.getSecurityMode(),set:(mode)=>{sessionSecurityMode=mode;settingsManager.setSecurityMode(mode);},context:runtimeFlags.approvalContext,onDecision:runtimeFlags.onApprovalDecision},
+                                    approval: {
 										get: () => settingsManager.getApprovalMode(),
 										set: (mode) => settingsManager.setApprovalMode(mode),
 									},
@@ -179,7 +156,7 @@ const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: 
 					noContextFiles: true,
 					staticOnly: true,
 					additionalSkillPaths: [resolveProductSkillsDir()],
-					systemPrompt: BITTUNE_SYSTEM_PROMPT + (taskScope ? `\n指定资源任务已启用（${taskScope.scope_hash}）。Core固定计划/服务/记录ID范围；inspect_records省略id时可检索授权集合内的事实（deployment_plan、service_instance、suite_result、benchmark_result、experiment、report等），支持各类型已有过滤字段；不会返回范围外记录。run/artifact仍需具体授权ID，不做运行时全局枚举。通用工具结果末尾的Bittune evidence提供已保存的run_id/artifact_refs，可直接作为报告来源。只读文件：${JSON.stringify(taskScope.read_paths)}。仅允许以下Bash原样查询：${JSON.stringify(taskScope.inventory_commands)}。不调用investigate。allow_execution=${taskScope.allow_execution}。报告用suite_selections覆盖全部点，修订用based_on_report_id保留全部引用。` : ""),
+					systemPrompt: BITTUNE_SYSTEM_PROMPT + (taskScope ? `\n指定资源任务已启用（${taskScope.scope_hash}）。Core固定计划/服务/记录ID范围；inspect_records省略id时可检索授权集合内的事实（deployment_plan、service_instance、suite_result、benchmark_result、experiment、report等），支持各类型已有过滤字段；不会返回范围外记录。run/artifact仍需具体授权ID，不做运行时全局枚举。通用工具结果末尾的Bittune evidence提供已保存的run_id/artifact_refs，可直接作为报告来源。只读文件：${JSON.stringify(taskScope.read_paths)}。允许以下Bash原样只读查询：${JSON.stringify(taskScope.inventory_commands)}。另有宿主明确授权的精确准备命令：${JSON.stringify(taskScope.allow_execution ? taskScope.preparation_commands ?? [] : [])}，必须通过原生确认后执行；这不是允许任意shell。除此之外的Bash命令禁止。不调用investigate。allow_execution=${taskScope.allow_execution}。报告用suite_selections覆盖全部点，修订用based_on_report_id保留全部引用。` : ""),
 				});
 			await resourceLoader.reload();
 
@@ -226,7 +203,7 @@ export async function createBittuneRuntime(options: CreateBittuneRuntimeOptions 
 	} else {
 		sessionManager = SessionManager.create(cwd, paths.sessions);
 	}
-	const runtime = await createAgentSessionRuntime(createRuntimeFactory(paths), {
+	const runtime = await createAgentSessionRuntime(createRuntimeFactory(paths, {securityMode:options.securityMode,approvalContext:options.approvalContext,onApprovalDecision:options.onApprovalDecision}), {
 		cwd,
 		agentDir: paths.agent,
 		sessionManager,
@@ -243,6 +220,7 @@ Usage:
   bittune install --package <tgz> | --offline <bundle-dir> [options]
   bittune configure --base-url <url> --model-id <id> [options]
   bittune doctor
+  bittune task | runtime | tune | accept | report | compare | security --help
   bittune version
 
 Commands:
@@ -351,8 +329,7 @@ async function doctor(): Promise<void> {
 	console.log(`Core directory: ${paths.core}`);
 	console.log(`Agent model selection: ${model && providerId ? `${providerId}/${model.id}` : "missing"}`);
 	console.log(`Agent authentication: ${model && modelRuntime.hasConfiguredAuth(model.provider) ? "available" : "missing"}`);
-	const approvalLabel = settingsManager.getApprovalMode() === "ask" ? "ask（逐次确认）" : `${settingsManager.getApprovalMode()}（普通确认跳过）`;
-	console.log(`Confirmation preference: ${approvalLabel}（用 /approval 修改；显式确认始终不跳过）`);
+	console.log(`Approval policy: ${settingsManager.getSecurityMode()}（用 /security manual|agent|full 修改）`);
 	if (!model) {
 		console.log("Python Core: skipped (Agent model not initialized).");
 	} else {
@@ -393,6 +370,7 @@ export async function runBittuneCli(argv: string[]): Promise<void> {
 		console.log(`Bittune ${VERSION}`);
 		return;
 	}
+	if(invocation.kind==="workflow"){const {runWorkflowCli}=await import("./cli/workflow-cli.ts");await runWorkflowCli(invocation.command,invocation.args);return;}
 	if (invocation.kind === "configure") {
 		await configure(invocation.options);
 		return;
@@ -408,7 +386,7 @@ export async function runBittuneCli(argv: string[]): Promise<void> {
 	}
 
 		if (invocation.sessionId) assertValidSessionId(invocation.sessionId);
-		const { runtime } = await createBittuneRuntime({ ...(invocation.sessionId ? { sessionId: invocation.sessionId } : {}) });
+		const { runtime } = await createBittuneRuntime({ ...(invocation.sessionId ? { sessionId: invocation.sessionId } : {}),securityMode:invocation.securityMode });
 		if (process.env.BITTUNE_HEADLESS === "1") {
 			try {
 				if (invocation.message) await runtime.session.prompt(invocation.message);
@@ -421,7 +399,7 @@ export async function runBittuneCli(argv: string[]): Promise<void> {
 		await mode.run();
 	}
 
-if (process.argv[1] && realpathSync(resolve(process.argv[1])) === fileURLToPath(import.meta.url)) {
+if (process.env.BITTUNE_EMBEDDED_HOST !== "1" && process.argv[1] && realpathSync(resolve(process.argv[1])) === fileURLToPath(import.meta.url)) {
 	await runBittuneCli(process.argv.slice(2)).catch((error: unknown) => {
 		const message = error instanceof Error ? error.message : String(error);
 		console.error(`bittune: ${message}`);

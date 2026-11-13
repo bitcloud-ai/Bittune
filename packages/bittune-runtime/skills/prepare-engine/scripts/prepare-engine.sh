@@ -3,11 +3,11 @@
 set -eu
 
 usage() {
-	echo "usage: prepare-engine.sh <vllm|sglang> [official-repository@sha256:digest]" >&2
+	echo "usage: prepare-engine.sh <vllm|sglang> [official-repository@sha256:digest] [export-oci|import-oci directory]" >&2
 	exit 2
 }
 
-if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+if [ "$#" -lt 1 ] || [ "$#" -gt 4 ] || [ "$#" -eq 3 ]; then
 	usage
 fi
 
@@ -30,7 +30,7 @@ case "$KIND" in
 		;;
 esac
 
-if [ "$#" -eq 2 ]; then
+if [ "$#" -ge 2 ]; then
 	case "$2" in
 		"$REPOSITORY"@sha256:*) ;;
 		*) echo "prepare-engine: exact digest must use the engine's official repository" >&2; exit 2 ;;
@@ -44,6 +44,15 @@ if [ "$#" -eq 2 ]; then
 		exit 2
 	fi
 	IMAGE=$2
+fi
+
+if [ "$#" -eq 4 ]; then
+	case "$3" in
+		export-oci) SCRIPT=export-engine-oci.py ;;
+		import-oci) SCRIPT=import-engine-oci.py ;;
+		*) usage ;;
+	esac
+	exec "${BITTUNE_CORE_PYTHON:-python3}" "$(dirname "$0")/$SCRIPT" "$IMAGE" "$4"
 fi
 
 if ! command -v docker >/dev/null 2>&1; then

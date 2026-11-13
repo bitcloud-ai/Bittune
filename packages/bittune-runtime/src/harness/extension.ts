@@ -1,3 +1,4 @@
+import {createApprovalController,createApprovalReviewer,SECURITY_LABELS,isSecurityMode,type SecurityMode,type ApprovalDecision,type ApprovalRequest} from "./security.ts";
 import { VERSION } from "../config.ts";
 	import { createManagedTools, MANAGED_TOOL_NAMES, type ManagedToolDependencies } from "./managed-tools.ts";
 	import { evaluateGenericCall, type PolicyOutcome } from "./runtime-policy.ts";
@@ -24,6 +25,7 @@ const GENERIC_TOOLS = ["bash", "read", "edit", "write"] as const;
 type GenericToolName = (typeof GENERIC_TOOLS)[number];
 
 export interface HarnessExtensionOptions {
+ security?:{get():SecurityMode;set(mode:SecurityMode):void;context?:()=>Record<string,unknown>;onDecision?:(request:ApprovalRequest,decision:ApprovalDecision)=>void};
 	taskScope?: TaskScope;
 	/** BitTune-owned roots the Agent must never touch through generic tools. */
 	protectedRoots: readonly string[];
@@ -93,6 +95,8 @@ function pathOf(event: ToolCallEvent): string | undefined {
  * true execution point, and every generic call feeds the evidence intake.
  */
 export function createHarnessExtension(options: HarnessExtensionOptions): ExtensionFactory {
+		const approveBase=createApprovalController({mode:()=>options.security?.get() ?? "manual",review:createApprovalReviewer(options.agentDir || options.coreHome,options.cwd,options.modelRuntime),onDecision:options.security?.onDecision});
+ const approve=(request:ApprovalRequest,human:()=>Promise<boolean>)=>approveBase({...request,context:options.security?.context?.()},human);
 		const dependencies: ManagedToolDependencies = { client: options.client };
 	// Session-scoped in-memory skip; a new session starts fresh by design.
 	let sessionSkip = false;
@@ -131,6 +135,7 @@ export function createHarnessExtension(options: HarnessExtensionOptions): Extens
 			};
 			const askApproval = options.askApproval ? withConfirmStatus(options.askApproval) : undefined;
 					const managedTools = createManagedTools(dependencies, {
+                        ...(options.security?{approve}:{}),
 						taskScope: options.taskScope,
 						...(askApproval ? { askApproval } : {}),
 					});
@@ -153,32 +158,14 @@ export function createHarnessExtension(options: HarnessExtensionOptions): Extens
 						: undefined;
 			if (investigate) pi.registerTool(investigate);
 
-		const approvalLabel = (): string => {
-			if (options.approval?.get() === "always_skip") return "确认偏好：始终跳过普通确认（/approval ask 恢复）";
-			if (sessionSkip) return "确认偏好：本次会话跳过普通确认（/approval ask 恢复）";
-			return "确认偏好：逐次确认";
-		};
-
-		pi.registerCommand("approval", {
-			description: "设置普通确认偏好：ask（逐次确认）/ session（本次会话跳过）/ always（全局始终跳过）",
-			handler: async (args, ctx) => {
-				const mode = args.trim().toLowerCase();
-				if (mode === "session") {
-					sessionSkip = true;
-				} else if (mode === "always") {
-					sessionSkip = false;
-					options.approval?.set("always_skip");
-				} else if (mode === "ask" || mode === "") {
-					sessionSkip = false;
-					options.approval?.set("ask");
-				} else {
-					ctx.ui.notify("用法：/approval ask | session | always。", "warning");
-					return;
-				}
-				ctx.ui.notify(`已设置：${approvalLabel()}。显式确认（危险命令、网络写入、受管操作、上传发布）始终不会被跳过。`, "info");
-				ctx.ui.setStatus("bittune-approval", approvalLabel());
-			},
-		});
+        const approvalLabel=()=>`审批策略：${SECURITY_LABELS[options.security?.get() || "manual"]}`;
+        for(const name of ["approval","security","permissions"])pi.registerCommand(name,{
+          description:"审批策略：manual（手动）/agent（代理代审）/full（完全）",
+          handler:async(args,ctx)=>{const mode=args.trim()==="ask"?"manual":args.trim();if(!mode){ctx.ui.notify(approvalLabel(),"info");return;}
+            if(!isSecurityMode(mode)){ctx.ui.notify("用法：/security manual | agent | full；旧session/always偏好不会自动升级权限。","warning");return;}
+            options.security?.set(mode);ctx.ui.notify(approvalLabel(),"info");ctx.ui.setStatus("bittune-approval",approvalLabel());
+          }
+        });
 
 			pi.on("session_start", async (event, ctx) => {
 					notifyWarn = (message) => ctx.ui.notify(message, "warning");
@@ -252,12 +239,13 @@ export function createHarnessExtension(options: HarnessExtensionOptions): Extens
 			if (outcome.decision === "allow") return;
 			// Ordinary asks may honor the session/global skip preference;
 			// explicit asks and denies always reach the user.
-			if (outcome.decision === "ask" && resolveApprovalSkip(outcome.confirmation, options.approval?.get(), sessionSkip)) {
+			if (!options.security && outcome.decision === "ask" && resolveApprovalSkip(outcome.confirmation, options.approval?.get(), sessionSkip)) {
 				return;
 			}
 			const reason = formatPolicyBlock(outcome);
-			if (outcome.decision === "ask" && ctx.hasUI) {
-					const approved = await ctx.ui.confirm(COPY.confirm.policy, outcome.reason);
+			if (outcome.decision === "ask" && (ctx.hasUI || options.security)) {
+                    const human=()=>ctx.hasUI?ctx.ui.confirm(COPY.confirm.policy,outcome.reason):Promise.resolve(false);
+                    const approved=options.security?await approve({title:COPY.confirm.policy,message:outcome.reason,tool:event.toolName,params:event.input as Record<string,unknown>,forceHuman:outcome.reason.includes("上传")||/\bgit\s+push\b|\b(?:kill|pkill|killall)\b|\bdocker\s+(?:stop|kill|rm|run|restart|start)\b/.test(commandOf(event) || "")},human):await human();
 				return approved ? undefined : { block: true, reason, terminate: false };
 			}
 			return { block: true, reason, terminate: false };

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "pack_id": "bittune-text-qa-smoke-v1",
+  "samples": [
+    {"sample_id":"arithmetic","messages":[{"role":"system","content":"回答选择题。请直接给出最终答案，使用格式：最终答案：<选项字母>。"},{"role":"user","content":"3+5等于多少？A.7 B.8 C.9 D.10"}],"expected":{"kind":"contains","text":"最终答案：B"}},
+    {"sample_id":"knowledge-water","messages":[{"role":"system","content":"回答选择题。请直接给出最终答案，使用格式：最终答案：<选项字母>。"},{"role":"user","content":"水分子的化学式是？A.CO2 B.H2O C.O2 D.N2"}],"expected":{"kind":"contains","text":"最终答案：B"}},
+    {"sample_id":"logical-transitivity","messages":[{"role":"system","content":"回答选择题。请直接给出最终答案，使用格式：最终答案：<选项字母>。"},{"role":"user","content":"已知所有甲都是乙，所有乙都是丙。能否推出所有甲都是丙？A.能 B.不能 C.甲必为空 D.丙必为空"}],"expected":{"kind":"contains","text":"最终答案：A"}},
+    {"sample_id":"reading-count","messages":[{"role":"system","content":"回答选择题。请直接给出最终答案，使用格式：最终答案：<选项字母>。"},{"role":"user","content":"一个盒子中有3个蓝球，红球比蓝球多2个。红球有几个？A.1 B.3 C.5 D.6"}],"expected":{"kind":"contains","text":"最终答案：C"}},
+    {"sample_id":"knowledge-jupiter","messages":[{"role":"system","content":"回答选择题。请直接给出最终答案，使用格式：最终答案：<选项字母>。"},{"role":"user","content":"太阳系中体积最大的行星是？A.木星 B.地球 C.金星 D.水星"}],"expected":{"kind":"contains","text":"最终答案：A"}}
+  ]
+}

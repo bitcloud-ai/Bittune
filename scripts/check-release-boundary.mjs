@@ -21,6 +21,7 @@ const requiredPaths = [
 	"ROADMAP.md",
 	"THIRD_PARTY_NOTICES.md",
 	"dist/bittune.js",
+	"dist/task-worker.js",
 	"dist/modes/interactive/theme/dark.json",
 	"dist/modes/interactive/theme/light.json",
 	"dist/skills/prepare-engine/SKILL.md",
@@ -41,6 +42,7 @@ const requiredPaths = [
 	"install/offline-manifest.env",
 	"install/requirements.txt",
 	"install/core-requirements.txt",
+	"install/report-requirements.txt",
 	"package.json",
 ];
 const allowedPrefixes = ["dist/skills/", "dist/node_modules/@silvia-odwyer/photon-node/"];

@@ -85,8 +85,7 @@ def write_report(params: dict[str, Any], context: dict[str, Any]) -> dict[str, A
             title, scope, narrative, conclusion, resolved_references, rendered_claims, rendered_suite, rendered_pd
         )
         markdown += coverage_markdown(coverage)
-        artifact_ref = run.artifact("report", markdown, "text/markdown")
-
+        details_ref = run.artifact("report-details", markdown, "text/markdown")
         report_id = f"report-{uuid.uuid4()}"
         payload: dict[str, Any] = {
             "schema_version": 1,
@@ -100,10 +99,13 @@ def write_report(params: dict[str, Any], context: dict[str, Any]) -> dict[str, A
             "suite_claims": rendered_suite,
             "pd_claims": rendered_pd,
             "coverage": coverage,
-            "artifact_ids": [artifact_ref["artifact_id"]],
+            "artifact_ids": [],
             "created_at": utc_now(),
             "provenance": "derived",
         }
+        from bittune_core.report_reading import reading_markdown
+        artifact_ref = run.artifact("report", reading_markdown(payload), "text/markdown")
+        payload["artifact_ids"] = [artifact_ref["artifact_id"], details_ref["artifact_id"]]
         store.put_report(payload, run.run_id)
         return run.success(f"Report {report_id} 已写入，Markdown Artifact {artifact_ref['artifact_id']}。", {"report": payload})
 

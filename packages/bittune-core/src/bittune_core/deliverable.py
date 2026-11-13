@@ -37,6 +37,9 @@ _DETAIL_METRICS = (
 def export_deliverable(params: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     store: CoreStore = context["store"]
     intent = params.get("intent")
+    if intent in ("report_bundle", "signed_pdf"):
+        from bittune_core.report_delivery import export_report
+        return export_report(params, context)
     if intent not in ("result_workbook", "evidence_pack"):
         raise ContractError("invalid_input", "export_deliverable 只接受 result_workbook 或 evidence_pack。", {"intent": intent})
     service_id = params.get("service_instance_id")

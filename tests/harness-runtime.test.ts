@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -438,7 +438,7 @@ test("证据构造：Bash 保留结果与完整输出，文件工具不复制文
 });
 
 test("阶段 4：提示词、工具描述和用户文档不再把缺口写成下一步", async () => {
-	assert.equal(BITTUNE_SYSTEM_PROMPT_MARKER, "<!-- bittune-system-prompt:v14 -->");
+	assert.equal(BITTUNE_SYSTEM_PROMPT_MARKER, "<!-- bittune-system-prompt:v15 -->");
 	assert.equal(BITTUNE_SYSTEM_PROMPT.includes("ask Cloud for a shortlist or layout before creating"), false);
 	assert.equal(BITTUNE_SYSTEM_PROMPT.includes("Sweep numbers appear only through report references"), false);
 	assert.equal(BITTUNE_SYSTEM_PROMPT.includes("continue with a local plan"), false);
@@ -507,4 +507,23 @@ test("generic result hook preserves output and staging when evidence intake fail
 	assert.equal(warnings.length, 1);
 	const { readdir } = await import("node:fs/promises");
 	assert.equal((await readdir(join(coreHome, "staging", "receipt-session"))).length, 1);
+});
+
+
+test("Core writer contention returns a readable message without leaking its protocol tag", async () => {
+ const coreHome=await mkdtemp(join(tmpdir(),"bittune-core-contention-"));
+ const owner=await CoreClient.start({coreHome,modulePaths:[CORE_SRC]});
+ let contender:CoreClient|undefined;
+ try{
+  await owner.request("task_scope_status",{}, {sessionId:"owner"});
+  contender=await CoreClient.start({coreHome,modulePaths:[CORE_SRC]});
+  await assert.rejects(contender.request("task_scope_status",{}, {sessionId:"contender"}),error=>{
+   assert.ok(error instanceof CoreError);
+   assert.equal(error.code,"core_busy");
+   assert.ok(!error.message.includes("core_busy:"));
+   assert.ok(error.message.includes("工作区"));
+   return true;
+  });
+  await owner.request("task_scope_status",{}, {sessionId:"owner"});
+ }finally{await contender?.stop();await owner.stop();await rm(coreHome,{recursive:true,force:true});}
 });

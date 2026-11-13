@@ -128,7 +128,6 @@ test("product copy: 禁止列表不得出现在 copy 模块导出的字符串值
 			"This command is not available in Bittune",
 			"Direct shell commands are not available in Bittune",
 			"完整结果与内部 ID 见展开的诊断详情。",
-			"core_busy:",
 			"core_unavailable:",
 		];
 		for (const file of files) {

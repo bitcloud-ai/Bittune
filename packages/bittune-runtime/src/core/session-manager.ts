@@ -1027,18 +1027,22 @@ export class SessionManager {
 		}
 
 		if (!this.flushed) {
-			const fd = openSync(this.sessionFile, "wx");
-			try {
-				for (const e of this.fileEntries) {
-					writeFileSync(fd, `${JSON.stringify(e)}\n`);
-				}
-			} finally {
-				closeSync(fd);
-			}
-			this.flushed = true;
+			this.flush();
 		} else {
 			appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
 		}
+	}
+
+	/** Persist a host-created session before the first model reply, without inventing messages. */
+	flush(): void {
+		if (!this.persist || !this.sessionFile || this.flushed) return;
+		const fd = openSync(this.sessionFile, "wx", 0o600);
+		try {
+			for (const entry of this.fileEntries) writeFileSync(fd, `${JSON.stringify(entry)}\n`);
+		} finally {
+			closeSync(fd);
+		}
+		this.flushed = true;
 	}
 
 	private _appendEntry(entry: SessionEntry): void {

@@ -283,7 +283,7 @@ test("Bittune Runtime preserves Pi Agent Loop streaming and final assistant mess
 				"Bittune is ready",
 			);
 			assert.equal(requests.length, 1);
-					assert.match(requests[0] ?? "", /bittune-system-prompt:v14/);
+					assert.match(requests[0] ?? "", /bittune-system-prompt:v15/);
 			assert.doesNotMatch(requests[0] ?? "", /expert coding assistant operating inside pi/i);
 		} finally {
 			await runtime.dispose();

@@ -1,7 +1,7 @@
 """Declared loopback measurements stay out of signed claims.
 
 A loopback benchmark is measured provenance with binding declared. It does not
-create a service row, and metric and suite claims reject it.
+create a service row, and metric, suite, and experience claims reject it.
 """
 
 import os

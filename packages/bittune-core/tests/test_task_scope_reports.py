@@ -91,7 +91,7 @@ class TaskScopeReportsTests(unittest.TestCase):
         scope=self.scope()
         result=self.request(scope.bind(inspect_records,self.core.store),{'kind':'report'})
         self.assertEqual(result['records'],[])
-        for params in ({'kind':'run'},{'kind':'artifact'},{'kind':'unknown_record'},{'kind':'report','id':'report-outside'}):
+        for params in ({'kind':'run'},{'kind':'artifact'},{'kind':'cloud_outbox'},{'kind':'report','id':'report-outside'}):
             result=self.request(scope.bind(inspect_records,self.core.store),params)
             self.assertEqual(result['error']['code'],'task_scope_denied')
 

@@ -13,6 +13,8 @@ python3 scripts/benchmark_assets.py catalog pd-cluster --json
 ```
 
 - 单点验证、并发或长度扫描：读取 benchmark-single-node。
+- 文本规则质量：用benchmark_suite(intent=correctness)和本机correctness-pack-v1；明确样例/输出预算，期望答案留在本机，不称作通用模型质量。
+- 工作点费用估算：用benchmark_suite(intent=cost_planning)引用已保存Suite工作点，单价/币种/GPU张数必须用户给定，结果标estimated并附来源Artifact，不运行新负载。
 - 缓存构造、冷暖配对：读取 benchmark-cache。
 - P:D容量或集群测试目录：读取 benchmark-pd。
 - 报告、Excel、证据交付：读取 benchmark-report。

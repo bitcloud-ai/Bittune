@@ -15,6 +15,7 @@ test("host preparation command keeps approval and cannot expand to other shell a
 	const authorized={...scope,allow_execution:true,preparation_commands:[command]};
 	const input={toolName:"bash" as const,command,cwd:"/tmp",protectedRoots:[]};
 	assert.equal(evaluateScopedGeneric(input,authorized).decision,"ask");
+	assert.equal(evaluateScopedGeneric(input,authorized).confirmation,"explicit");
 	assert.equal(evaluateScopedGeneric({...input,command:command+"; docker ps"},authorized).decision,"deny");
 	assert.equal(evaluateScopedGeneric(input,{...authorized,allow_execution:false}).decision,"deny");
 });

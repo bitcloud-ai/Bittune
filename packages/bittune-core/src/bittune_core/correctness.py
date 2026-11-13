@@ -14,12 +14,23 @@ from typing import Any
 
 import jsonschema
 
-from bittune_core.contracts import ContractError
+from bittune_core.contracts import ContractError, sha256_canonical
 from bittune_core.runs import ManagedRun
 from bittune_core.store import CoreStore, utc_now
 from bittune_core.benchmark import subject_identity_fields
 from bittune_core.suite import _ready_managed
 from bittune_core.suite_profiles import _schema, load_profile
+
+
+def correctness_pack_info(params,context):
+    raw=params.get('path')
+    path=Path(raw) if isinstance(raw,str) and raw else Path(__file__).parent/'data'/'text-qa-smoke-v1.json'
+    try:
+        document=json.loads(path.read_text(encoding='utf-8'))
+        jsonschema.validate(document,_schema('correctness-pack.schema.json'))
+    except (OSError,json.JSONDecodeError,jsonschema.ValidationError,jsonschema.SchemaError):
+        raise ContractError('invalid_input','评测包不可读或不符合现有correctness-pack-v1格式。')
+    return {'pack_id':document['pack_id'],'path':str(path.resolve()),'sample_count':len(document['samples']),'pack_hash':sha256_canonical(document),'scoring':'existing exact/contains rules; not a general semantic capability score'}
 
 
 def run_correctness(params: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
@@ -36,7 +47,16 @@ def run_correctness(params: dict[str, Any], context: dict[str, Any]) -> dict[str
             jsonschema.validate(document, _schema("correctness-pack.schema.json"))
         except (OSError, json.JSONDecodeError, jsonschema.ValidationError, jsonschema.SchemaError):
             return _finish(store, run, _base(service, profile, "evidence_insufficient", "pack_invalid", "正确性包无法读取或不符合 schema，不计算准确率。"))
-        samples = _score(service, document["samples"])
+        pack_hash=sha256_canonical(document)
+        if params.get('correctness_pack_hash') and params['correctness_pack_hash']!=pack_hash:
+            raise ContractError('state_conflict','评测包已变化，请重新读取并确认。')
+        limit=params.get('correctness_max_samples')
+        if limit is not None and (isinstance(limit,bool) or not isinstance(limit,int) or limit<1 or len(document['samples'])>limit):
+            raise ContractError('invalid_input','评测包超过用户本轮样例预算，未发起请求。')
+        max_tokens=params.get('correctness_output_tokens')
+        if max_tokens is not None and (isinstance(max_tokens,bool) or not isinstance(max_tokens,int) or not 1<=max_tokens<=8192):
+            raise ContractError('invalid_input','每题输出Token预算需要1至8192。')
+        samples = _score(service, document["samples"], cancellation, max_tokens, run.progress)
         if any("passed" not in item for item in samples):
             return _finish(store, run, _base(
                 service,
@@ -45,6 +65,8 @@ def run_correctness(params: dict[str, Any], context: dict[str, Any]) -> dict[str
                 "unmapped_or_score_error",
                 "有样本对不上或打分失败，不计算准确率。",
                 pack_id=document["pack_id"],
+                pack_hash=pack_hash,
+                scoring_method="exact_or_contains_v1",
                 samples=samples,
             ))
         hits = sum(1 for item in samples if item["passed"])
@@ -55,6 +77,8 @@ def run_correctness(params: dict[str, Any], context: dict[str, Any]) -> dict[str
             "ok",
             "每个样本都有对应回复并完成打分。",
             pack_id=document["pack_id"],
+            pack_hash=pack_hash,
+            scoring_method="exact_or_contains_v1",
             sample_count=len(samples),
             hit_count=hits,
             accuracy=hits / len(samples),
@@ -63,12 +87,14 @@ def run_correctness(params: dict[str, Any], context: dict[str, Any]) -> dict[str
         return _finish(store, run, payload)
 
 
-def _score(service: dict[str, Any], samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _score(service: dict[str, Any], samples: list[dict[str, Any]], cancellation=None, max_tokens=None, on_progress=None) -> list[dict[str, Any]]:
     scored: list[dict[str, Any]] = []
     model = (service.get("model_ref") or {}).get("model_id", "")
-    for sample in samples:
+    for index,sample in enumerate(samples):
+        if on_progress:on_progress(f"文本规则评测 {index+1}/{len(samples)}…")
+        if cancellation is not None:cancellation.raise_if_requested()
         try:
-            reply, request_id = _chat(service["endpoint"], model, sample["messages"])
+            reply, request_id = _chat(service["endpoint"], model, sample["messages"], max_tokens)
         except Exception:  # noqa: BLE001 — one failed request stays on the sample
             scored.append(_sample(sample["sample_id"], None, error="request_failed"))
             continue
@@ -98,9 +124,11 @@ def _sample(sample_id: str, request_id: str | None, passed: bool | None = None, 
     return item
 
 
-def _chat(endpoint: str, model: str, messages: list[dict[str, str]]) -> tuple[str, str | None]:
+def _chat(endpoint: str, model: str, messages: list[dict[str, str]], max_tokens=None) -> tuple[str, str | None]:
     """One non-streaming completion. Empty text means the reply could not be mapped."""
-    payload = json.dumps({"model": model, "messages": messages, "temperature": 0, "stream": False}).encode()
+    body={"model":model,"messages":messages,"temperature":0,"stream":False}
+    if max_tokens is not None:body["max_tokens"]=max_tokens
+    payload=json.dumps(body).encode()
     request = urllib.request.Request(
         f"{endpoint}/v1/chat/completions",
         data=payload,
