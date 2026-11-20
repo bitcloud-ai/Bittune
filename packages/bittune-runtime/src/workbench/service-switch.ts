@@ -19,3 +19,21 @@ export async function switchFrozenPlan(call: ManagedCall, sourceId: string, targ
   const started=await call("deploy_service",{action:"start",plan_id:planId,ready_timeout_seconds:600});
   return {plan:created.data.plan,service:started.data.service};
 }
+
+/** Explicit opt-in recovery; only the original service and this attempt's returned service are touched. */
+export async function applyFrozenPlanWithRecovery(call:ManagedCall,sourceId:string,targetPlanId:string,originalPlanId:string,goal:string,options:{enabled:boolean;cancelled:()=>boolean;onRecovery?:()=>void}){
+ let sourceStopped=false,startAttempted=false;
+ const tracked:ManagedCall=async(name,args)=>{if(name==='deploy_service'&&args.action==='start')startAttempted=true;const result=await call(name,args);if(name==='deploy_service'&&args.action==='stop'&&args.service_instance_id===sourceId&&['exited','dead','stopped'].includes(result.data?.service?.observed_state))sourceStopped=true;return result;};
+ try{return {applied:true,recovered:false,result:await switchFrozenPlan(tracked,sourceId,targetPlanId,goal)};}
+ catch(error){
+  const code=(error as any)?.code;
+  if(!options.enabled||!sourceStopped||!startAttempted||options.cancelled()||['user_declined','approval_denied'].includes(code))throw error;
+  options.onRecovery?.();
+  try{
+   const failedId=(error as any)?.failed_service_id;
+   if(failedId){const observation=await call('inspect_service',{action:'get',service_instance_id:failedId});const state=observation.data?.current_container_state;if(!state||state.status==='docker_inspect_failed')throw Error('不能确认新配置的失败服务状态，未执行自动恢复。');if(state.running||!['exited','dead','no_container','stopped'].includes(state.status))await call('deploy_service',{action:'stop',service_instance_id:failedId});}
+   const restored=await switchFrozenPlan(call,sourceId,originalPlanId,goal+'；按用户勾选策略恢复原冻结方案');
+   return {applied:false,recovered:true,result:restored,original_error:error instanceof Error?error.message:String(error)};
+  }catch(recovery){throw Object.assign(Error('新配置启动失败，恢复原方案也未完成；原始执行记录保留。'),{code:'rollback_failed',cause:error,recovery_error:recovery instanceof Error?recovery.message:String(recovery)});}
+ }
+}

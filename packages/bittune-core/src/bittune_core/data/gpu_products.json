@@ -2,6 +2,7 @@
   "exact": {
     "NVIDIA GeForce RTX 4090": "RTX 4090",
     "NVIDIA GeForce RTX 5090": "RTX 5090",
+    "NVIDIA RTX 6000D": "RTX 6000D",
     "NVIDIA L40S": "L40S",
     "NVIDIA L40": "L40",
     "NVIDIA A100-SXM4-80GB": "A100",

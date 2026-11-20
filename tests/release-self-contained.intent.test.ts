@@ -23,7 +23,7 @@ test("发行完全体基线意图：photon 整包 vendor，wasm 与 photon_rs.js
 		assert.equal(PHASE5_RELEASE_LAYOUT.bundle, "dist/bittune.js");
 	});
 
-	test("安装器载荷门：detect/adopt/extract 都要求 skills 与 photon", () => {
+	test("安装器载荷门：detect/adopt/extract 都要求 worker、skills 与 photon", () => {
 		const root = mkdtempSync(join(tmpdir(), "bittune-payload-"));
 		try {
 			assert.equal(agentPayloadComplete(root), false);

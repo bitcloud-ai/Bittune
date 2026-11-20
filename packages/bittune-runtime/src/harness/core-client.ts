@@ -248,7 +248,7 @@ function resolvePython(options: CoreClientOptions): string {
 			stream.destroy();
 		}
         const detail = error?.message ?? this.stderrTail.trim().split(/\r?\n/).pop();
-        if (this.stderrTail.includes("core_busy:")) {
+        if (this.stderrTail.split(/\r?\n/).some(line => line.split(":", 1)[0].trim() === "core_busy")) {
             this.failPending(new CoreError("core_busy", "工作区已有活跃CLI或Web任务；请等待后重试。"));
             return;
         }

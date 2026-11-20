@@ -515,7 +515,7 @@ class CoreStore:
     def read_artifact_text(self, artifact_id: str) -> dict[str, Any]:
         """Full UTF-8 body for Core consumers that must parse JSON.
 
-        Excerpt is capped at 64 KiB. Structured JSON readers
+        Excerpt is capped at 64 KiB. predicted_claims and other JSON readers
         must not raise that cap; they call this when the excerpt is truncated.
         The 8 MiB write cap is the bound.
         """
@@ -544,6 +544,26 @@ class CoreStore:
         rows = self.db.execute(
             "SELECT artifact_id, label, sha256, relative_path FROM artifacts WHERE run_id = ? ORDER BY created_at",
             (run_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_cost_artifacts(self, suite_ids: list[str] | None, limit: int, before: str | None = None) -> list[dict[str, Any]]:
+        clauses = ["a.label = 'token-cost-estimate'", "a.media_type = 'application/json'", "r.status = 'completed'", "r.action_path = 'managed'", "r.tool_name = 'benchmark_suite'", "json_extract(r.input_json, '$.intent') = 'cost_planning'"]
+        values: list[Any] = []
+        if suite_ids is not None:
+            if not suite_ids:
+                return []
+            clauses.append("json_extract(r.input_json, '$.suite_result_id') IN (" + ",".join("?" for _ in suite_ids) + ")")
+            values.extend(suite_ids)
+        if before:
+            cursor = self.db.execute("SELECT created_at FROM artifacts WHERE artifact_id = ? AND label = 'token-cost-estimate'", (before,)).fetchone()
+            if cursor is None:
+                raise ContractError("invalid_input", "成本历史游标不存在。")
+            clauses.append("(a.created_at < ? OR (a.created_at = ? AND a.artifact_id < ?))")
+            values.extend([cursor["created_at"], cursor["created_at"], before])
+        rows = self.db.execute(
+            "SELECT a.artifact_id,a.run_id,a.created_at,a.sha256,a.size_bytes,json_extract(r.input_json, '$.suite_result_id') AS source_suite FROM artifacts a JOIN runs r ON r.run_id = a.run_id WHERE " + " AND ".join(clauses) + " ORDER BY a.created_at DESC,a.artifact_id DESC LIMIT ?",
+            (*values, limit),
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -853,3 +873,5 @@ class CoreStore:
             "source_run_id": row["source_run_id"],
             "created_at": row["created_at"],
         }
+
+    # -- cloud outbox ----------------------------------------------------

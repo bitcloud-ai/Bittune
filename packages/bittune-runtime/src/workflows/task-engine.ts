@@ -1,3 +1,8 @@
+import {packageRegistry} from "./capability-packages.ts";
+import {capabilityCatalog,governanceView} from "./governance.ts";
+import {acceptancePlan} from "./acceptance-plan.ts";
+import {selectionApplication} from "./selection-application.ts";
+import {selectSaved} from "./selection.ts";
 import {modelMessage} from "./model-message.ts";
 import {validateTaskInput} from "./task-input.ts";
 import {SettingsManager as OperatorSettings} from "../core/settings-manager.ts";
@@ -6,17 +11,18 @@ import {runFixedPreparation} from "../workbench/fixed-preparation.ts";
 import {buildEvidenceFromResult,submitEvidence,type GenericToolResultEvent} from "../harness/generic-evidence.ts";
 import type {TaskScope} from "../harness/task-scope.ts";
 import {accountingView} from "./views.ts";
+import {acceptanceView,type CostHistory} from "./acceptance.ts";
 /** Shared local task engine used by the standalone CLI and optional Web adapter.
  * Core remains the authority for managed execution and facts. */
-import { switchFrozenPlan } from "../workbench/service-switch.ts";
+import { applyFrozenPlanWithRecovery } from "../workbench/service-switch.ts";
 import { validateTuningBaseline, canReleaseTuningBaseline, bindTuningObjective } from "../workbench/tuning-baseline.ts";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { acceptTaskMessage, createTaskResponder, type TaskMessage } from "../workbench/dialogue.ts";
 import { recommendationSchema, recommendationHardware, type RecommendationOutput } from "../workbench/recommendations.ts";
 import { exposeWorkbenchTool, retainDeployedService } from "../workbench/plan-schema.ts";
 import { randomUUID } from "node:crypto";
-import { isDeepStrictEqual } from "node:util";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { isDeepStrictEqual, stripVTControlCharacters } from "node:util";
+import { existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createBittuneRuntime, resolveBittunePaths, resolveProductSkillsDir } from "../bittune.ts";
 import { CoreClient } from "../harness/core-client.ts";
@@ -26,6 +32,8 @@ import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
 type JSONValue = Record<string, any>;
 interface Task {
   task_id: string;
+  actor_ref?: string;
+  attempt?: number;
   security_mode:SecurityMode;
   session_id: string;
   name: string;
@@ -38,11 +46,12 @@ interface Task {
   lifecycleSucceeded?: boolean;
   messages?: TaskMessage[];
   events: JSONValue[];
-  records: JSONValue[];
+  records: {kind:string;id:string;payload:JSONValue}[];
   pending?: JSONValue;
   error?: string;
   summary?: string;
   comparison?: JSONValue;
+  delivery_outputs?:{report_id:string;artifact_ids:string[]}[];
   recommendations?: RecommendationOutput;
   recommendation_source?: JSONValue;
   manager: SessionManager;
@@ -67,15 +76,20 @@ const dialogueRequests = new Set<AbortController>();
 function fail(code: string, message: string): never {
   throw Object.assign(new Error(message), { code });
 }
-function approvalContext(t:Task){return {goal:t.request.goal,kind:t.request.kind,mode:t.request.mode,source_service_id:t.request.service_instance_id,plans:t.records.filter(r=>r.kind==="deployment_plan").map(r=>r.id),candidate_frozen_plan_ids:t.records.filter(r=>r.kind==="deployment_plan"&&r.id!==t.request.plan_id&&r.payload.status==="frozen").map(r=>r.id),services:t.records.filter(r=>r.kind==="service_instance").map(r=>r.id),baseline_complete:canReleaseTuningBaseline(t.records,1+(t.request.max_trials || 0)),workflow:t.request.mode==="tune"?"测量原配置→校验并冻结候选→停止当前受管中间服务→启动冻结候选→同条件测量→比较与报告→保留最后运行时。停止中间服务是提交调优任务已授权的必要切换步骤，不是独立取消服务。":undefined,budget:{requests:t.request.request_count,trials:t.request.max_trials}};}
+function approvalContext(t:Task){return {goal:t.request.goal,kind:t.request.kind,mode:t.request.mode,rollback_on_failure:t.request.rollback_on_failure===true,source_service_id:t.request.service_instance_id,plans:t.records.filter(r=>r.kind==="deployment_plan").map(r=>r.id),candidate_frozen_plan_ids:t.records.filter(r=>r.kind==="deployment_plan"&&r.id!==t.request.plan_id&&r.payload.status==="frozen").map(r=>r.id),services:t.records.filter(r=>r.kind==="service_instance").map(r=>r.id),baseline_complete:canReleaseTuningBaseline(t.records,1+(t.request.max_trials || 0)),workflow:t.request.mode==="tune"?"测量原配置→校验并冻结候选→停止当前受管中间服务→启动冻结候选→同条件测量→比较与报告→保留最后运行时。停止中间服务是提交调优任务已授权的必要切换步骤，不是独立取消服务。":undefined,budget:{requests:t.request.request_count,trials:t.request.max_trials}};}
 function confirmTask(t:Task,title:string,message:string,action?:JSONValue):Promise<boolean>{
  if(t.abort.signal.aborted)return Promise.resolve(false);
  t.state="waiting_confirmation";t.pending={confirmation_id:randomUUID(),title,message,action};save(t);
  return new Promise(resolve=>{t.approve=value=>{t.pending=undefined;t.approve=undefined;t.state="running";save(t);resolve(value);};});
 }
+function preparationText(text: string): string {
+  return stripVTControlCharacters(text).replace(/\r/g, "\n").split("\n")
+    .map(line=>line.trimEnd()).filter(line=>line.trim()).join("\n");
+}
 function view(t: Task): JSONValue {
   return {
     task_id: t.task_id,
+    actor_ref:t.actor_ref,attempt:t.attempt,
     security_mode:t.security_mode,
     session_id: t.session_id,
     name: t.name,
@@ -85,12 +99,13 @@ function view(t: Task): JSONValue {
     updated_at: t.updated_at,
     switch_context: t.switch_context,
     messages: t.messages || [],
-    events: t.events,
+    events: t.request.kind === "assets" ? t.events.map(e=>({...e,message:preparationText(e.message)})) : t.events,
     records: t.records,
     pending: t.pending,
-    error: t.error,
+    error: t.state === "completed" ? undefined : t.error,
     summary: t.summary,
     comparison: t.comparison,
+    delivery_outputs:t.delivery_outputs||[],
     recommendations: t.recommendations,
     recommendation_source: t.recommendation_source,
   };
@@ -100,9 +115,10 @@ function save(t: Task): void {
   t.manager.appendCustomEntry("web_task_state", view(t));
   t.manager.flush();
 }
-function event(t: Task, type: string, message: string): void {
+function event(t: Task, type: string, message: string, actor?:string): void {
   const item = {
     type,
+    ...(actor?{actor_ref:actor}:{}),
     message: message.slice(0, 1400),
     at: new Date().toISOString(),
   };
@@ -266,8 +282,8 @@ async function recommend(t: Task): Promise<void> {
     description:"根据给定真实硬件提交最多三个模型/配置建议。仅保存草稿，不校验、下载、部署或测量。",
     parameters:recommendationSchema,
     execute:async(_id,args)=>{
-      submitted=args;
-      t.recommendations=args;
+      submitted=args as RecommendationOutput;
+      t.recommendations=submitted;
       t.recommendation_source={hardware_snapshot_id:snapshot.hardware_snapshot_id,provider:runtime!.session.model?.provider,model:runtime!.session.model?.id,generated_at:new Date().toISOString()};
       save(t);
       return {content:[{type:"text",text:"推荐草稿已保存。"}],details:{draft:true}};
@@ -292,10 +308,11 @@ async function recommend(t: Task): Promise<void> {
       "本机model_path和固定image_digest只能原样采用输入候选/用户明确提供的值，不能猜测；缺少时返回空字符串，并说明需要准备制品。不得为新模型套用另一个模型的权重目录。"+
       "保守设置上下文、最大序列数、显存比例；正式调优比较推荐cache_disabled=true关闭前缀复用，区别于生成中的KV缓存；input_tokens+output_tokens必须小于等于max_context。正式请求默认不超过用户预算（未指定时4），max_trials不超过3。"+
       "单机多卡建议显式给出gpu_device_ids和tensor_parallel_size，GPU编号只能来自快照；vLLM还可给pipeline_parallel_size，SGLang的pipeline_parallel_size只能为1。TP乘PP不能超过所选空闲GPU数量；并行规模只是待验证的部署配置，不承诺性能提升。"+
-      "每次submit_recommendations必须全量提交summary与完整candidates对象的所有required字段，包括limitations。工具校验失败后也必须重发完整对象，不能只补缺失字段或发送JSON补丁；不要用省略号代替字段。数字必须符合工具schema；输出通过submit_recommendations，rationale解释硬件与配置的对应关系，limitations说明制品/显存估算/兼容性尚未验证。"+
+      "每次submit_recommendations必须全量提交summary与完整candidates对象的所有required字段，包括limitations。candidates和limitations必须是完整的JSON数组，不能将数组作为字符串传入。工具校验失败后也必须重发完整对象，不能只补缺失字段或发送JSON补丁；不要用省略号代替字段。数字必须符合工具schema；输出通过submit_recommendations，rationale解释硬件与配置的对应关系，limitations说明制品/显存估算/兼容性尚未验证。"+
       "\n真实硬件："+JSON.stringify(recommendationHardware(snapshot))+
       "\n用户目标："+p.goal+"；执行模式："+p.mode+
       "\n用户模型提示："+JSON.stringify({model_id:p.model_id || "",model_path:p.model_path || ""})+
+      (Array.isArray(p.serving_spec?.gpu_device_ids) ? "\n用户已选择 GPU 编号，请将建议限制在此范围：" + JSON.stringify(p.serving_spec.gpu_device_ids) : "") +
       "\n当前预算偏好："+JSON.stringify({input_tokens:p.input_tokens,output_tokens:p.output_tokens,concurrency:p.concurrency,request_count:p.request_count,max_trials:p.max_trials})+
       "\n输入候选目录（仅建议来源，不是本次运行证明）："+JSON.stringify(p.recommendation_catalog || [])
     );
@@ -335,7 +352,8 @@ async function prepare(t: Task): Promise<void> {
         runtime_kind: p.runtime_kind,
         ...(p.runtime_major ? { runtime_major: p.runtime_major } : {}),
         image_repository: p.image_repository,
-        image_digest: p.image_digest,
+        ...(p.image_digest !== undefined ? { image_digest: p.image_digest } : {}),
+        ...(p.image_id !== undefined ? { image_id: p.image_id } : {}),
       },
       serving_spec: p.serving_spec,
     });
@@ -364,7 +382,9 @@ async function switchService(t: Task): Promise<void> {
     t.switch_context={previous_plan_id:source.plan_id,previous_service_id:source.service_instance_id,selected_plan_id:target.plan_id};save(t);
   }finally{await c.stop();}
   const taskDir=join(paths.root,"workbench",t.task_id);mkdirSync(taskDir,{recursive:true,mode:0o700});const scopePath=join(taskDir,"scope.json");
-  writeFileSync(scopePath,JSON.stringify({schema_version:1,allow_execution:true,plan_ids:[...new Set([source.plan_id,target.plan_id])],service_instance_ids:[source.service_instance_id],record_ids:[source.hardware_snapshot_id,target.hardware_snapshot_id].filter(Boolean),read_paths:[],preparation_commands:[],require_idle_gpu:true,max_service_starts:2}),{mode:0o600});
+  const scopedServices = [source.service_instance_id];
+  // Core counts the tracked source as well as the candidate and recovery starts.
+  writeFileSync(scopePath,JSON.stringify({schema_version:1,allow_execution:true,plan_ids:[...new Set([source.plan_id,target.plan_id])],service_instance_ids:scopedServices,record_ids:[source.hardware_snapshot_id,target.hardware_snapshot_id].filter(Boolean),read_paths:[],preparation_commands:[],require_idle_gpu:true,max_service_starts:scopedServices.length+2}),{mode:0o600});
   const previous=process.env.BITTUNE_TASK_SCOPE_FILE;process.env.BITTUNE_TASK_SCOPE_FILE=scopePath;let runtime:AgentSessionRuntime;
   try{({runtime}=await createBittuneRuntime({cwd,sessionId:t.session_id,securityMode:t.security_mode,approvalContext:()=>approvalContext(t),onApprovalDecision:(_r,d)=>event(t,"approval_review",`${d.decision}: ${d.reason}`)}));}
   finally{if(previous===undefined)delete process.env.BITTUNE_TASK_SCOPE_FILE;else process.env.BITTUNE_TASK_SCOPE_FILE=previous;}
@@ -379,18 +399,19 @@ async function switchService(t: Task): Promise<void> {
       const result=await tool!.execute(id,params,t.abort.signal,update=>{const text=update.content.filter(x=>x.type==="text").map(x=>(x as any).text).join("\n");if(text)event(t,"progress",text);});
       t.currentAction=undefined;recordResult(t,name,result);
       const details=result.details as any;
-      if(details?.code)fail(details.code,details.message || "用户拒绝该受管操作；未继续切换。");
+      if(details?.code)throw Object.assign(Error(details.message || "受管操作未完成，执行记录已保留。"),{code:details.code,failed_service_id:name==="deploy_service"&&args.action==="start"?details.data?.service?.service_instance_id:undefined});
       if(name==="deploy_service"&&args.action==="start"&&details?.data?.service){t.switch_context!.new_service_id=details.data.service.service_instance_id;t.switch_context!.endpoint=details.data.service.endpoint;save(t);}
       return details;
     };
-    const result=await switchFrozenPlan(invoke,source.service_instance_id,target.plan_id,t.request.goal || "用户确认的参数方案切换");
-    t.summary="已通过Bittune完成受管切换，新端点："+result.service.endpoint;
-    if(t.state!=="cancelled")t.state="completed";
+    const outcome=await applyFrozenPlanWithRecovery(invoke,source.service_instance_id,target.plan_id,source.plan_id,t.request.goal || "用户确认的参数方案切换",{enabled:t.request.rollback_on_failure===true&&t.request.mode==="apply",cancelled:()=>t.abort.signal.aborted,onRecovery:()=>event(t,"rollback_attempt","按用户勾选策略尝试恢复原冻结方案；仍遵守当前任务审批和资源范围。")});
+    const result=outcome.result;
+    if(outcome.recovered){t.switch_context!.recovered=true;t.switch_context!.recovery_service_id=result.service.service_instance_id;t.switch_context!.new_service_id=result.service.service_instance_id;t.error=outcome.original_error;t.summary="推荐配置应用失败，已恢复原冻结方案；恢复端点："+result.service.endpoint;t.state="failed";}
+    else{t.summary="已通过Bittune完成受管切换，新端点："+result.service.endpoint;if(t.state!=="cancelled")t.state="completed";}
   }catch(error){
     if(!t.abort.signal.aborted){
       const tool=runtime!.session.agent.state.tools.find(x=>x.name==="inspect_records");
       try{const result=await tool!.execute(randomUUID(),{kind:"service_instance",limit:20},t.abort.signal);const data=result.details as any;
-        for(const fact of data?.records || []){if(fact.id===source.service_instance_id)continue;if(fact.payload?.ownership==="managed"){t.records.push({kind:"service_instance",id:fact.id,payload:fact.payload});t.switch_context!.new_service_id=fact.id;}}save(t);
+        for(const fact of data?.records || []){if(fact.id===source.service_instance_id)continue;if(fact.payload?.ownership==="managed"&&t.records.some(r=>r.kind==="deployment_plan"&&r.id===fact.payload.plan_id)){t.records.push({kind:"service_instance",id:fact.id,payload:fact.payload});t.switch_context!.new_service_id=fact.id;}}save(t);
       }catch{/* Original failure remains authoritative; service list still exposes Core facts. */}
     }
     throw error;
@@ -399,15 +420,89 @@ async function switchService(t: Task): Promise<void> {
 async function deliverReport(t: Task): Promise<void> {
   const c = await CoreClient.start({ coreHome: paths.core });
   try {
-    const fact = await c.request<any>("inspect_records", { kind: "report", id: t.request.source_report_id }, { sessionId: t.session_id });
-    t.records.push({ kind: "report", id: fact.id, payload: fact.payload });
-    const result = await c.request<any>("export_deliverable", {
-      intent: t.request.mode, report_id: t.request.source_report_id,
-    }, { sessionId: t.session_id, signal: t.abort.signal, onProgress: message => event(t, "progress", message) });
-    recordResult(t, "export_deliverable", { details: result });
-    t.summary = result.summary;
+    const ids:string[]=t.request.report_ids||[t.request.source_report_id];t.delivery_outputs=[];
+    for(const id of ids){
+      t.abort.signal.throwIfAborted();
+      const fact=await c.request<any>("inspect_records",{kind:"report",id},{sessionId:t.session_id});t.records.push({kind:"report",id:fact.id,payload:fact.payload});
+      const start=t.records.length;
+      const result=await c.request<any>("export_deliverable",{intent:t.request.mode,report_id:id},{sessionId:t.session_id,signal:t.abort.signal,onProgress:message=>event(t,"progress",message)});
+      recordResult(t,"export_deliverable",{details:result});t.delivery_outputs.push({report_id:id,artifact_ids:t.records.slice(start).filter(r=>r.kind==="artifact").map(r=>r.id)});
+      event(t,"delivery_progress",`已导出${t.delivery_outputs.length}/${ids.length}份报告；来源和文件分别保留。`);save(t);
+    }
+    t.summary=`已导出${ids.length}份报告，使用原生交付产物，没有新增测量。`;
     if (t.state !== "cancelled") t.state = "completed";
   } finally { await c.stop(); }
+}
+/** Finish short measurements from saved Core facts, without a new model or GPU request. */
+async function finishRecordedSuites(t: Task, taskDir: string, expectedCount: number): Promise<boolean> {
+  const suites = t.records.filter(r => r.kind === "suite_result");
+  if (suites.length !== expectedCount) return false;
+  const measured = suites.map(suite => (suite.payload.rows || []).filter(
+    (row: JSONValue) => row.measurement_status === "complete",
+  ));
+  if (measured.some(rows => rows.length === 0)) return false;
+  const compare = expectedCount > 1 && !t.comparison;
+  const objective = t.request.goal;
+  if (compare && (!["output_tokens_per_second", "mean_ttft_ms", "goodput_req_per_s"].includes(objective) ||
+      measured.some(rows => rows.length !== 1))) return false;
+  t.abort.signal.throwIfAborted();
+  const scopeFile = join(taskDir, "delivery-scope.json");
+  writeFileSync(scopeFile, JSON.stringify({
+    schema_version: 1, allow_execution: false, plan_ids: [], service_instance_ids: [],
+    record_ids: [...new Set(t.records.map(r => r.id))], read_paths: [],
+  }), { mode: 0o600 });
+  event(t, "progress", "从本任务已保存的原生测量整理交付资料，无需再次测量。");
+  const core = await CoreClient.start({ coreHome: paths.core, taskScopeFile: scopeFile });
+  const request = async (tool: string, params: JSONValue) => {
+    event(t, "tool_start", tool);
+    const receipt = await core.request<any>(tool, params, {
+      sessionId: t.session_id, signal: t.abort.signal,
+      onProgress: message => event(t, "progress", message),
+    });
+    recordResult(t, tool, { details: receipt });
+    return receipt;
+  };
+  try {
+    if (compare) {
+      await request("compare_results", {
+        suite_points: suites.map((suite, index) => {
+          const row = measured[index][0];
+          return { suite_result_id: suite.id, scenario_id: row.scenario_id,
+            concurrency: row.concurrency, repeat: row.repeat || 1 };
+        }),
+        objective, record: true,
+      });
+    }
+    let reportId = t.records.find(r => r.kind === "report" && suites.every(suite =>
+      r.payload.coverage?.suites?.some((item: JSONValue) => item.suite_result_id === suite.id),
+    ))?.id;
+    if (!reportId) {
+      const result = await request("write_report", {
+        title: `${t.name} · ${suites.length === 1 ? "基线" : "调优"}报告`.slice(0, 300),
+        scope: "本任务已经完成的正式测量。",
+        narrative: "报告整理已保存的原生套件、对应工作点及实际观测。",
+        conclusion: "测量条件、指标和可比性见报告证据。",
+        suite_selections: suites.map(suite => ({
+          suite_result_id: suite.id, metrics: ["output_tokens_per_second", "mean_ttft_ms"],
+        })),
+        references: { experiment_ids: t.records.filter(r => r.kind === "experiment").map(r => r.id) },
+      });
+      reportId = result.data.report.report_id;
+    }
+    await request("export_deliverable", { intent: "report_bundle", report_id: reportId });
+    t.summary = "已从完整测量生成报告和交付包。";
+    t.error = undefined;
+    if (t.state !== "cancelled") t.state = "completed";
+  } catch (error) {
+    if (!t.abort.signal.aborted) {
+      t.error = error instanceof Error ? error.message : String(error);
+      event(t, "tool_error", t.error);
+      t.state = "partial";
+    }
+  } finally {
+    await core.stop();
+  }
+  return true;
 }
 async function qualityTask(t:Task):Promise<void>{
   const c=await CoreClient.start({coreHome:paths.core});
@@ -426,7 +521,7 @@ async function qualityTask(t:Task):Promise<void>{
 async function compareSaved(t: Task): Promise<void> {
   const c=await CoreClient.start({coreHome:paths.core});
   try{
-    for(const id of new Set(t.request.suite_points.map((p:any)=>p.suite_result_id))){
+    for(const id of new Set<string>(t.request.suite_points.map((p:any)=>p.suite_result_id))){
       const fact=await c.request<any>("inspect_records",{kind:"suite_result",id},{sessionId:t.session_id,signal:t.abort.signal});
       t.records.push({kind:"suite_result",id,payload:fact.payload});
     }
@@ -474,7 +569,7 @@ async function prepareAssets(t: Task): Promise<void> {
     const read=await CoreClient.start({coreHome:paths.core});
     try{const result=await read.request<any>("plan_deployment",{action:"validate",plan_id:t.request.plan_id},{sessionId:t.session_id,signal:t.abort.signal});recordResult(t,"plan_deployment",{details:result});plan=result.data.plan;}
     finally{await read.stop();}
-    if(!plan.validation.errors.some((e:any)=>e.code==="image_missing")){t.state=plan.validation.state==="valid"?"completed":"blocked";t.summary="已核对计划；当前没有缺失镜像需要准备。";return;}
+    if(!plan.validation.errors.some((e:any)=>e.code==="image_missing")){t.state=plan.validation.state==="valid"?"completed":"blocked";t.summary=t.state==="completed"?"镜像已就绪，计划校验通过；可返回向导确认部署。":"当前没有缺失镜像需要准备，但计划仍有其他待处理项；请返回参数页查看校验结果。";return;}
     const spec=plan.runtime_spec, repository=spec.runtime_kind==="vllm"?"vllm/vllm-openai":"lmsysorg/sglang";
     if(spec.image_repository!==repository||!/^sha256:[a-f0-9]{64}$/.test(spec.image_digest))fail("invalid_input","现有prepare-engine技能只准备对应官方仓库的固定digest镜像。");
     command=`sh ${quote(join(resolveProductSkillsDir(),"prepare-engine/scripts/prepare-engine.sh"))} ${spec.runtime_kind} ${quote(spec.image_repository+"@"+spec.image_digest)}`;
@@ -483,7 +578,7 @@ async function prepareAssets(t: Task): Promise<void> {
   const taskDir=join(paths.root,"workbench",t.task_id);mkdirSync(taskDir,{recursive:true,mode:0o700});
   const scopePath=join(taskDir,"scope.json");writeFileSync(scopePath,JSON.stringify({schema_version:1,allow_execution:true,plan_ids:plan?[plan.plan_id]:[],service_instance_ids:[],record_ids:plan?[plan.plan_id,plan.hardware_snapshot_id].filter(Boolean):[],read_paths:[],preparation_commands:[command]}),{mode:0o600});
   const preparationCore=await CoreClient.start({coreHome:paths.core,taskScopeFile:scopePath});
-  let succeeded=false;
+  let succeeded=false, executed=false, preparationError:string|undefined;
   try{
     const {scope}=await preparationCore.request<{scope:TaskScope}>("task_scope_status",{},{sessionId:t.session_id,signal:t.abort.signal});
     const approve=createApprovalController({mode:()=>t.security_mode,review:createApprovalReviewer(paths.agent,cwd),onDecision:(_r,d)=>event(t,"approval_review",`${d.decision}: ${d.reason}`)});
@@ -493,8 +588,8 @@ async function prepareAssets(t: Task): Promise<void> {
       const value=await runFixedPreparation({command,cwd,scope,protectedRoots:[paths.root,paths.core,paths.agent],signal:t.abort.signal,
         timeoutSeconds:imageExport?21600:3600,
         approve:reason=>approve({title:"制品准备与网络写入",message:reason,tool:"bash",params:{command},context:approvalContext(t),signal:t.abort.signal},()=>confirmTask(t,"制品准备与网络写入",reason,{tool:"bash",params:{command}})),
-        onStart:()=>event(t,"tool_start","bash：执行已确认的制品准备技能（不调用模型API）"),
-        onUpdate:text=>{if(Date.now()-lastProgress>=2000){lastProgress=Date.now();event(t,"progress",text.slice(-1000));}},
+        onStart:()=>{executed=true;event(t,"tool_start","bash：执行已确认的制品准备技能（不调用模型API）");},
+        onUpdate:text=>{if(Date.now()-lastProgress>=2000){lastProgress=Date.now();event(t,"progress",preparationText(text).split("\n").slice(-8).join("\n").slice(-1000));}},
       });
       if(value)result={type:"tool_result",toolCallId:randomUUID(),toolName:"bash",input:{command},...value,isError:false};
     }catch(error){result={type:"tool_result",toolCallId:randomUUID(),toolName:"bash",input:{command},content:[{type:"text",text:(error as Error).message}],details:undefined,isError:true};}
@@ -503,13 +598,20 @@ async function prepareAssets(t: Task): Promise<void> {
       if(receipt){t.records.push({kind:"run",id:receipt.run_id,payload:receipt});for(const a of receipt.artifact_refs)t.records.push({kind:"artifact",id:a.artifact_id,payload:a});save(t);}
       const text=result.content.filter(x=>x.type==="text").map(x=>x.text).join("\n");event(t,result.isError?"tool_error":"tool_result",text.slice(-1400));
       succeeded=!result.isError&&!!receipt;
+      if(result.isError)preparationError=preparationText(text).slice(-1400);
+      else if(!receipt)preparationError="准备命令已返回，但原生执行凭据未保存成功；请检查本机记录存储后再继续。";
     }
   }finally{await preparationCore.stop();}
   if(t.state==="cancelled")return;
-  if(imageExport){t.state=succeeded?"completed":"blocked";t.summary=succeeded?"官方镜像OCI目录已导出并核验；节点导入与模型启动仍需单独完成。":"镜像OCI导出未完成，查看原生工具记录。";return;}
-  if(model){t.state=succeeded?"completed":"blocked";t.summary=succeeded?"模型准备脚本已完成；本机路径见技能输出，返回参数页后由Core校验身份。":"模型准备未完成，查看原生工具输出；未启动模型。";return;}
+  if(!succeeded){
+    t.state="blocked";t.error=preparationError;
+    t.summary=!executed?(preparationError?"本次准备尚未开始，请处理错误原因后再继续原任务。":"本次准备未获批准，尚未执行。可明确继续准备，重新处理审批。"):`${model?"模型权重准备":imageExport?"镜像导出":"镜像准备"}未完成。请先处理错误原因，再继续原任务；已有执行记录保留。`;
+    return;
+  }
+  if(imageExport){t.state="completed";t.summary="官方镜像OCI目录已导出并核验；节点导入与模型启动仍需单独完成。";return;}
+  if(model){t.state="completed";t.summary="模型准备脚本已完成；本机路径见技能输出，返回参数页后由Core校验身份。";return;}
   const verify=await CoreClient.start({coreHome:paths.core});
-  try{const result=await verify.request<any>("plan_deployment",{action:"validate",plan_id:plan.plan_id},{sessionId:t.session_id,signal:t.abort.signal});recordResult(t,"plan_deployment",{details:result});t.state=result.data.validation.state==="valid"?"completed":"blocked";t.summary=result.summary;}
+  try{const result=await verify.request<any>("plan_deployment",{action:"validate",plan_id:plan.plan_id},{sessionId:t.session_id,signal:t.abort.signal});recordResult(t,"plan_deployment",{details:result});t.state=result.data.validation.state==="valid"?"completed":"blocked";t.summary=t.state==="completed"?"镜像已准备，部署计划校验通过；可返回向导确认部署。":"镜像准备命令已完成，但部署计划仍有待处理项；请返回参数页查看校验结果。";}
   finally{await verify.stop();}
 }
 function profileDocument(p: any): JSONValue {
@@ -581,8 +683,8 @@ async function connectExecution(t: Task, runtime: AgentSessionRuntime): Promise<
       }
     }
     if (e.type === "message_end" && e.message.role === "assistant") {
-      if (e.message.stopReason === "error") {
-        t.error = e.message.errorMessage || "认知模型请求失败。";
+      if (e.message.stopReason === "error" || e.message.stopReason === "length") {
+        t.error = e.message.errorMessage || (e.message.stopReason === "length" ? "智能体达到模型 Token 上限，任务未继续。" : "认知模型请求失败。");
         event(t, "model_error", t.error);
       }
       const text = e.message.content
@@ -623,6 +725,7 @@ async function execute(t: Task, continuing = false): Promise<void> {
   let plan: any;
   let profile: any;
   let previous: any;
+  let resumedServiceId: string | undefined;
   try {
     if (continuing) {
       previous = await c.request(
@@ -634,18 +737,6 @@ async function execute(t: Task, continuing = false): Promise<void> {
         previous.usage.suite_calls >= count ||
         previous.usage.points >= count ||
         previous.usage.requests + p.request_count > count * p.request_count;
-    }
-    if (!managing && !reportOnly && !reuseBaseline) {
-      const activity = await c.request<any>(
-        "gpu_activity",
-        {},
-        { sessionId: t.session_id },
-      );
-      if (activity.data.busy)
-        fail(
-          "resource_busy",
-          "GPU正被现有进程使用；等待资源空闲后再明确重试，不终止其他任务。",
-        );
     }
     let planId = p.plan_id;
     if (managing)
@@ -663,6 +754,23 @@ async function execute(t: Task, continuing = false): Promise<void> {
         { sessionId: t.session_id },
       )
     ).payload;
+    if (!managing && !reportOnly && !reuseBaseline) {
+      const ownBaseline = continuing && p.mode === "tune" && t.records.some(r => r.kind === "suite_result")
+        ? t.records.find(r => r.kind === "service_instance" && r.payload.plan_id === planId &&
+            r.payload.ownership === "managed" && r.payload.observed_state === "ready" && r.payload.desired === "running")
+        : undefined;
+      resumedServiceId = ownBaseline?.id;
+      const activity = await c.request<any>(
+        "gpu_activity",
+        resumedServiceId ? { service_instance_id: resumedServiceId } : { plan_id: planId },
+        { sessionId: t.session_id },
+      );
+      if (resumedServiceId ? activity.data.other_busy : activity.data.busy)
+        fail(
+          "resource_busy",
+          "所选GPU正被现有进程使用；等待资源空闲后再明确重试，不终止其他任务。",
+        );
+    }
     if(reuseBaseline && (!continuing || !t.records.some(r=>r.kind==="suite_result"))) {
       const source=await c.request<any>("inspect_records",{kind:"service_instance",id:p.service_instance_id},{sessionId:t.session_id});
       validateTuningBaseline(source,plan,p.plan_id);
@@ -671,7 +779,6 @@ async function execute(t: Task, continuing = false): Promise<void> {
       if(!t.records.some(r=>r.kind==="service_instance"&&r.id===source.id))t.records.push({kind:"service_instance",id:source.id,payload:source.payload});
       if(!t.records.some(r=>r.kind==="deployment_plan"&&r.id===plan.plan_id))t.records.push({kind:"deployment_plan",id:plan.plan_id,payload:plan});
     }
-
     if (!managing && p.mode !== "deploy")
       profile = await c.request(
         "profile_info",
@@ -763,6 +870,7 @@ async function execute(t: Task, continuing = false): Promise<void> {
     }),
     { mode: 0o600 },
   );
+  if (reportOnly && await finishRecordedSuites(t, taskDir, count)) return;
   const previousScope = process.env.BITTUNE_TASK_SCOPE_FILE;
   process.env.BITTUNE_TASK_SCOPE_FILE = scopePath;
   let runtime: AgentSessionRuntime;
@@ -780,6 +888,11 @@ async function execute(t: Task, continuing = false): Promise<void> {
   if (t.abort.signal.aborted || t.state === "cancelled") {
     await runtime!.dispose();
     return;
+  }
+  if (continuing) {
+    // The task prompt below restores the saved facts and remaining budget.
+    // Leave the persisted transcript intact for history and provenance.
+    runtime!.session.agent.state.messages = [];
   }
   await connectExecution(t, runtime!);
   runtime!.session.setActiveToolsByName(
@@ -814,9 +927,11 @@ async function execute(t: Task, continuing = false): Promise<void> {
     p.mode === "deploy"
       ? "仅部署并记录真实服务端点，不测量；部署成功后必须保持本轮服务运行，停止服务由用户在运行时管理中主动发起，不得在任务收尾时stop。"
       : `使用benchmark_suite(intent=performance_sweep,package=short,profile_path=${JSON.stringify(profilePath)})。仅该冻结档案，最多${count}次Suite、${count}点、${count * p.request_count}正式请求。${p.mode === "tune" ? `基线后最多${p.max_trials}个保守参数候选；不同方案另建继承计划，比较必须保留不可签公平结论等限制；固定沿用原计划的缓存关闭设置，不在候选中改变缓存条件。` : "只跑基线，不搜索参数。"} 仅当还有下一个调优候选需要启动时，才停止当前中间服务释放GPU；仅基线测量或最后一个候选完成后，必须保留当前运行时和真实端点供用户使用，不得为了收尾或生成报告stop。不自动应用或重启所谓最佳方案，用户在运行时管理中自行决定。${count > 1 ? "有两个完整工作点时调用compare_results并record=true；仅Core可签字时才形成Experiment。" : "本任务只有一个工作点，不调用compare_results，不创建Experiment。"}write_report仅引用实际存在的原生Experiment，没有则如实说明，不编造；suite_selections仍覆盖全部点。按真实结果写报告，再用export_deliverable(intent=report_bundle,report_id=新报告ID)一次导出全部工作点、签名PDF和证据。导出仅传intent和report_id，不混入service_instance_id。每点正式请求与1次预热分开记录，Ready/API前置探测另计，不把正式样本数称为全部模型调用数。`;
-  const setup = reuseBaseline
+  const setup = resumedServiceId
+    ? `已保存的基线属于本任务运行时${resumedServiceId}。Bittune 已核对该实例和选卡。原计划${p.plan_id}的参数为${JSON.stringify(plan.serving_spec)}。保留其测量，不重新启动或测量基线。直接根据原计划继承一个候选，保留 GPU 编号和并行度，校验和冻结候选后再停止该基线，启动并测量候选。`
+    : reuseBaseline
     ? `用户选定的运行时${p.service_instance_id}是已运行的基准，配置为计划${p.plan_id}。先inspect_service(action=get)核对这个具体服务，再对它调用benchmark_suite测量基准，不重新freeze/start基准，不把该服务自身的GPU占用当成外部冲突。基准必须完整测量成功后才可派生候选并经原生确认停止基准；基准失败保留当前服务，不继续候选。用户目标指定的比较指标必须用于compare_results。候选阶段只继承此模型和镜像，Core仍检查新服务的GPU空闲条件。继续任务时先读本任务已完成的Suite与服务，不能重跑已有基准。`
-    : `先inspect_records读取已校验计划，inspect_environment确认GPU空闲；计划刚经校验，不得仅因快照ID不同而声称过期；只有Core明确报告snapshot_stale才继承创建新草稿；有其他任务占用则报告等待，不启动、不终止他人。不要调用inspect_service(action=list)，本任务只可get本轮创建的具体服务ID。若原快照过期，只继承原计划新建同模型/同镜像draft并引用本次快照。然后按已知计划validate/freeze/start（ready_timeout_seconds=600），只有本轮范围内服务可操作。`;
+    : `启动前 Bittune 已核对所选 GPU 占用。读取已校验计划后直接 freeze/start，Core 再次校验；只有需要刷新过期快照时调用 inspect_environment。计划刚经校验，不得仅因快照ID不同而声称过期；只有Core明确报告snapshot_stale才继承创建新草稿；所选 GPU 被其他任务占用时报告等待，其他卡上的服务可以保持运行。不要调用inspect_service(action=list)，本任务只可get本轮创建的具体服务ID。若原快照过期，只继承原计划新建同模型/同镜像draft并引用本次快照。然后按已知计划validate/freeze/start（ready_timeout_seconds=600），只有本轮范围内服务可操作。`;
   const prompt = managing
     ? `只处理用户选定的现有服务${p.service_instance_id}，先inspect_service(action=get)，然后deploy_service(action=${p.mode},service_instance_id=${p.service_instance_id})，保留原生确认；禁止start/创建计划/测量/模型下载，不操作其他服务，中文汇报真实观察状态。`
     : `通过Bittune完成已确认的工作台任务，中文汇报。用户目标：${p.goal || "部署及验证"}\n计划ID=${p.plan_id}。${setup}${taskGoal}\n用户已确认并提交本任务，不要以文字再次要求回复确认。直接调用所需的原生工具，freeze/start/stop等动作由本任务审批策略处理；需人工时会触发确认卡片，代理或完全模式以工具实际返回为准，不能自行批准或用文字代替。用户拒绝立即停止后续副作用。禁止下载镜像/权重，禁止任意shell/文件读取/外部端点，不更换选定模型或镜像。新计划create必须prior_source=user_specified，并用based_on_plan_id继承；serving_spec替换整段，调参时显式保留原来的其余参数；validate/freeze只传action和plan_id。报告引用真实Run、Suite及来源，未知指标不补0、不可签结论不伪造。发生失败不重试GPU，保留失败事实并报告；不要因测量、比较或报告失败而停止已部署运行时，服务交由用户在运行时管理中处理。`;
@@ -866,11 +981,13 @@ async function execute(t: Task, continuing = false): Promise<void> {
     await runtime!.dispose();
     t.runtime = undefined;
   }
+  if (finalState === "partial" && !t.abort.signal.aborted && await finishRecordedSuites(t, taskDir, count)) return;
   if (t.state !== "cancelled") t.state = finalState;
 }
 async function startTask(p: JSONValue): Promise<JSONValue> {
+  const actorRef=p.actor_ref;delete p.actor_ref;
   p={goal:"",...p};
-
+  if(p.source_package){const catalogue=capabilityCatalog(resolveProductSkillsDir());packageRegistry(paths.state,"check_source",p.source_package,catalogue.skills.map(s=>s.name));}
   validateTaskInput(p);
   p={...p,security_mode:isSecurityMode(p.security_mode)?p.security_mode:OperatorSettings.create(cwd,paths.agent,{projectTrusted:false}).getSecurityMode()};
   const existing = tasks.get(p.task_id);
@@ -883,6 +1000,7 @@ async function startTask(p: JSONValue): Promise<JSONValue> {
   const manager = SessionManager.create(cwd, paths.sessions);
   const t: Task = {
     task_id: p.task_id,
+    actor_ref:actorRef,attempt:0,
     security_mode:p.security_mode,
     session_id: manager.getSessionId(),
     name: p.name,
@@ -901,9 +1019,11 @@ async function startTask(p: JSONValue): Promise<JSONValue> {
 }
 function launch(t: Task, continuing = false): void {
   const p = t.request;
+  t.attempt=(t.attempt||0)+1;
   t.state = "queued";
   t.abort = new AbortController();
   t.error = undefined;
+  if(p.kind==="assets")t.summary=undefined;
   t.lifecycleSucceeded = false;
   active = t;
   save(t);
@@ -914,7 +1034,6 @@ function launch(t: Task, continuing = false): void {
       t.state = "running";
       save(t);
       if (p.kind === "recommend") await recommend(t);
-
       else if (p.kind === "prepare") await prepare(t);
       else if (p.kind === "report") await editReport(t);
       else if (p.kind === "compare") await compareSaved(t);
@@ -941,6 +1060,32 @@ function launch(t: Task, continuing = false): void {
 }
 async function dispatch(method: string, params: JSONValue,requestSignal?:AbortSignal): Promise<unknown> {
   if (stopping) fail("unavailable", "任务执行进程正在关闭。");
+  if(["create","continue","confirm","message","cost_projection","capability_package"].includes(method)){
+    const marker=join(paths.root,"maintenance.json");
+    if(existsSync(marker)){
+      let live=true;try{const owner=JSON.parse(readFileSync(marker,"utf8"));try{process.kill(owner.pid,0);}catch(e){if((e as NodeJS.ErrnoException).code==="ESRCH")live=false;}}catch{}
+      if(live)fail("workspace_busy","工作区正在进行备份维护，已有任务和运行时保留，请稍后再提交。");
+    }
+  }
+  if(method==="governance")return governanceView([...tasks.values()].map(view));
+  if(method==="capability_catalog"){const c=capabilityCatalog(resolveProductSkillsDir());return {...c,packages:packageRegistry(paths.state,"list",{},c.skills.map(s=>s.name))};}
+  if(method==="capability_package"){
+    if(!['list','instantiate'].includes(params.action)&&active)fail("workspace_busy","工作区有活跃任务，结束后再修改能力包状态。");
+    const c=capabilityCatalog(resolveProductSkillsDir());return packageRegistry(paths.state,params.action,params,c.skills.map(s=>s.name));
+  }
+  if(method==="network_diagnostics"){
+    const settings=OperatorSettings.create(cwd,paths.agent,{projectTrusted:false}),provider=settings.getDefaultProvider();let config:any={};try{config=JSON.parse(readFileSync(join(paths.agent,"models.json"),"utf8"));}catch{fail("invalid_config","请先通过原configure命令配置Agent网关。");}
+    const route=config.providers?.[provider||""];if(!route?.baseUrl)fail("invalid_config","当前提供方未配置网关地址。");
+    let endpoint:URL;try{endpoint=new URL(route.baseUrl.replace(/\/$/,"")+"/models");}catch{fail("invalid_config","网关地址无效。");}
+    if(!['http:','https:'].includes(endpoint.protocol)||endpoint.username||endpoint.password)fail("invalid_config","网关地址须为不含内嵌凭据的HTTP(S)地址。");
+    const key=typeof route.apiKey==='string'?(route.apiKey.startsWith('$')?process.env[route.apiKey.slice(1)]:route.apiKey):undefined;const started=Date.now();
+    try{const response=await fetch(endpoint,{headers:key?{authorization:'Bearer '+key}:{},method:'GET',redirect:'error',signal:AbortSignal.timeout(6000)});await response.body?.cancel();return {configured:true,reachable:true,http_status:response.status,api_usable:response.ok,duration_ms:Date.now()-started,inference_requested:false,model_list_stored:false};}
+    catch{return {configured:true,reachable:false,http_status:null,api_usable:false,duration_ms:Date.now()-started,inference_requested:false,model_list_stored:false,reason:'网关连接未成功，请核对网络、TLS信任与访问白名单。'};}
+  }
+  if(method==="maintenance_status"){
+    let maintenance=false;try{const marker=JSON.parse(readFileSync(join(paths.root,"maintenance.json"),"utf8"));process.kill(marker.pid,0);maintenance=true;}catch{}
+    return {maintenance,active_task_id:active?.task_id||null,node:process.versions.node,source:'current_process_and_workspace_maintenance_marker'};
+  }
   if(method==="security")return {mode:OperatorSettings.create(cwd,paths.agent,{projectTrusted:false}).getSecurityMode(),labels:SECURITY_LABELS};
   if(method==="accounting"){
     let suite:any;for(const task of tasks.values()){suite=task.records.find(r=>r.kind==="suite_result"&&r.id===params.suite_result_id);if(suite)break;}
@@ -994,6 +1139,37 @@ async function dispatch(method: string, params: JSONValue,requestSignal?:AbortSi
     return view(t);
   }
   if(method==="quality_pack")return coreRead(c=>c.request("correctness_pack_info",params,{sessionId:"web-quality-pack"}),true);
+  if(method==="acceptance_plan"){const task=tasks.get(params.task_id);if(!task)fail("not_found","来源任务不存在。");return acceptancePlan(task.request);}
+  if(method==="acceptance_summary"){
+    const task=tasks.get(params.task_id);if(!task)fail("not_found","来源任务不存在。");
+    const suiteIds=[...new Set(task.records.filter(r=>r.kind==="suite_result").map(r=>r.id))];
+    const costs=await coreRead(c=>c.request<CostHistory>("cost_estimates",{suite_result_ids:suiteIds,limit:20},{sessionId:"acceptance-summary-read"}),true);
+    return acceptanceView(task,[...tasks.values()],costs);
+  }
+  if(method==="select_saved"||method==="selection_application"){
+    const task=tasks.get(params.task_id);if(!task)fail("not_found","来源任务不存在。");
+    const ids=[...new Set(task.records.filter(r=>r.kind==="suite_result").map(r=>r.id))];
+    const costs:CostHistory={estimates:[],unavailable:[],next_cursor:null};
+    do{const page=await coreRead(c=>c.request<CostHistory>("cost_estimates",{suite_result_ids:ids,limit:100,before:costs.next_cursor || undefined},{sessionId:"selection-read"}),true);costs.estimates.push(...page.estimates);costs.unavailable.push(...page.unavailable);costs.next_cursor=page.next_cursor;}while(costs.next_cursor);
+    const selected=selectSaved(task,[...tasks.values()],costs,{goal:params.goal,threshold:Number(params.threshold),currency:params.currency,pack_hash:params.pack_hash});
+    if(method==="select_saved")return selected;
+    if(!selected.recommended)fail("invalid_input","当前没有符合条件的推荐配置，请先补齐所需成绩或成本。");
+    return coreRead(async c=>{
+      const get=(kind:string,id:string)=>c.request<any>("inspect_records",{kind,id},{sessionId:"selection-application-read"});
+      const service=await get("service_instance",selected.recommended!.service_instance_id),plan=await get("deployment_plan",service.payload.plan_id);
+      const list=await c.request<any>("inspect_records",{kind:"service_instance",limit:100},{sessionId:"selection-application-read"});
+      return selectionApplication(selected,service,plan,list.records,params.current_service_id || undefined);
+    },true);
+  }
+  if(method==="cost_history"){
+    if(params.task_id&&params.suite_result_id)fail("invalid_input","请选择任务或套件来源之一。");
+    let suites:string[]|undefined;
+    if(params.task_id){
+      const task=tasks.get(params.task_id);if(!task)fail("not_found","来源任务不存在。");
+      suites=[...new Set(task.records.filter(r=>r.kind==="suite_result").map(r=>r.id))];
+    }else if(params.suite_result_id)suites=[params.suite_result_id];
+    return coreRead(c=>c.request("cost_estimates",{suite_result_ids:suites,limit:params.limit===""||params.limit===undefined?50:Number(params.limit),before:params.before || undefined},{sessionId:"cost-history-read"}),true);
+  }
   if(method==="cost_projection")return coreRead(async c=>{
     const suite=(await c.request<any>("inspect_records",{kind:"suite_result",id:params.suite_result_id},{sessionId:"web-cost-read"})).payload;
     return c.request("benchmark_suite",{...params,intent:"cost_planning",service_instance_id:suite.service_instance_id},{sessionId:"web-cost-"+randomUUID()});
@@ -1007,15 +1183,20 @@ async function dispatch(method: string, params: JSONValue,requestSignal?:AbortSi
       !t.records.some((r) =>
         ["suite_result", "benchmark_result"].includes(r.kind) || (r.kind==="service_instance"&&r.id!==t.request.service_instance_id),
       );
+    const preparationRetry=t.request.kind==="assets"&&["blocked","failed","interrupted"].includes(t.state);
     if (
       active ||
-      (!unstarted && !["partial","interrupted"].includes(t.state)) ||
-      t.request.kind !== "execute" ||
-      !["benchmark", "tune"].includes(t.request.mode)
+      (!preparationRetry && (
+        (!unstarted && !["partial","interrupted"].includes(t.state)) ||
+        t.request.kind !== "execute" ||
+        !["benchmark", "tune"].includes(t.request.mode)
+      ))
     )
       fail("conflict", "当前任务不能继续，请核对状态与剩余预算。");
     if(params.security_mode!==undefined){if(!isSecurityMode(params.security_mode))fail("invalid_input","审批策略无效。");event(t,"operator_policy",`用户将继续任务审批改为${SECURITY_LABELS[params.security_mode]}`);t.security_mode=params.security_mode;t.request.security_mode=params.security_mode;}
-    launch(t, existsSync(join(paths.root,"workbench",t.task_id,"scope.json")));
+    if(preparationRetry)event(t,"operator_retry","用户继续原制品准备任务；保留已有记录，本次动作重新按审批策略处理。");
+    if(params.actor_ref)t.actor_ref=params.actor_ref;
+    launch(t, !preparationRetry&&existsSync(join(paths.root,"workbench",t.task_id,"scope.json")));
     return view(t);
   }
   if (method === "confirm" || method === "cancel") {
@@ -1024,8 +1205,10 @@ async function dispatch(method: string, params: JSONValue,requestSignal?:AbortSi
     if (method === "confirm") {
       if (!t.approve || t.pending?.confirmation_id !== params.confirmation_id)
         fail("conflict", "该确认已失效，请刷新当前任务。");
+      event(t,"operator_confirmation",params.approved===true?"操作者批准了当前待确认操作。":"操作者拒绝了当前待确认操作。",params.actor_ref||"local-owner");
       t.approve(params.approved === true);
     } else if (t === active) {
+      event(t,"operator_cancel","操作者取消了当前任务；服务清理由原执行流程回执确认。",params.actor_ref||"local-owner");
       t.state = "cancelled";
       t.abort.abort();
       t.approve?.(false);

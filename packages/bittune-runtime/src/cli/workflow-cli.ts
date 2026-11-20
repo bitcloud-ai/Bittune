@@ -1,50 +1,71 @@
+import {acceptancePlan,acceptancePlanMarkdown} from "../workflows/acceptance-plan.ts";
+import {spawn} from "node:child_process";
+import {probeCore,buildCoreEnv} from "../harness/core-client.ts";
+import {taskSocketPath} from "../workflows/task-client.ts";
 import {readFile,writeFile} from "node:fs/promises";
 import {resolve,join,sep} from "node:path";
 import {randomUUID} from "node:crypto";
 import {createInterface} from "node:readline/promises";
 import {stripVTControlCharacters} from "node:util";
+import {acceptanceMarkdown,tuningOutline,type AcceptanceSummary} from "../workflows/acceptance.ts";
 import {TaskClient} from "../workflows/task-client.ts";
 import {resolveBittunePaths} from "../core/bittune-paths.ts";
 import {SettingsManager} from "../core/settings-manager.ts";
 import {SECURITY_LABELS,isSecurityMode,type SecurityMode} from "../harness/security.ts";
 
 const states:Record<string,string>={queued:"已排队",running:"执行中",waiting_confirmation:"等待确认",completed:"已完成",prepared:"计划已校验",recommended:"推荐已生成",failed:"失败",blocked:"执行受阻",partial:"部分完成",cancelled:"已取消",interrupted:"已中断"};
-const flags=new Set(["json","detach","yes","overwrite"]);
-const options=new Set(["approval","file","service","plan","task","report","suite","scenario","concurrency","repeat","price","gpus","currency","hours","input-tokens","output-tokens","requests","trials","goal","name","pack","threshold","message","output","confirmation"]);
+const flags=new Set(["json","detach","yes","overwrite","rollback-on-failure"]);
+const options=new Set(["approval","file","service","plan","task","report","suite","scenario","concurrency","repeat","price","gpus","currency","hours","input-tokens","output-tokens","requests","trials","goal","name","pack","threshold","message","output","confirmation","limit","before","artifact","pack-hash"]);
 function parse(args:string[]){const position:string[]=[],values=new Map<string,string>();for(let i=0;i<args.length;i++){const a=args[i]!;if(!a.startsWith("--")){position.push(a);continue;}const k=a.slice(2);if(!options.has(k)&&!flags.has(k))throw new Error(`未知参数${a}`);if(values.has(k))throw new Error(`参数${a}重复`);if(flags.has(k)){values.set(k,"true");continue;}const v=args[++i];if(v===undefined||v.startsWith("--"))throw new Error(`参数${a}缺少值`);values.set(k,v);}return {position,values};}
 async function jsonFile(path:string|undefined){if(!path)throw new Error("需要--file指定JSON文件。");let text:string;try{text=await readFile(path,"utf8");}catch{throw new Error("无法读取指定文件。");}try{return JSON.parse(text);}catch{throw new Error("文件不是有效的JSON。");}}
 function clean(value:unknown){return stripVTControlCharacters(String(value ?? ""));}
-export const WORKFLOW_HELP=`本地任务与服务（独立命令行）
+export const WORKFLOW_HELP=`本地任务与服务（不依赖Web/Cloud）
+  bittune governance [audit|capabilities|agent|network] --json
+  bittune governance package list|import|preflight|approve|retire|instantiate [ID] [--file FILE] --json
+  bittune backup create|list|verify|restore --profile FILE
   bittune security [manual|agent|full]          查看/设置手动、代理、完全审批
-  bittune task list | show <id>                查看后台任务
+  bittune task list | show <id>                查看两端共用任务
   bittune task start --file request.json       发起部署/准备/推荐等任务
-  bittune task continue <id> [--approval MODE]  从保存状态继续
+  bittune task continue <id> [--approval MODE]  继续制品准备或剩余调优，重新处理审批
   bittune task cancel <id>                     取消任务，服务不会因此自动停掉
   bittune task approve <id> --confirmation ID  批准当前确认（--yes）或拒绝
   bittune task worker status | stop            查看或停止空闲任务进程
   bittune runtime list | show <id> | api <id>
   bittune runtime stop <id> | recover <id>
-  bittune runtime apply <id> --plan PLAN        应用冻结配置
+  bittune runtime apply <id> --plan PLAN        应用冻结配置（可加--rollback-on-failure）
   bittune runtime rollback <id> --plan PLAN     回滚指定冻结配置
   bittune runtime chat <id> [--message TEXT]    与部署模型对话，非工程Agent
   bittune tune --service ID [--goal throughput|latency] [--requests 4] [--trials 1]
   bittune accept quality --service ID [--pack PATH] [--requests 5] [--threshold 80]
   bittune accept output --task ID [--hours 1]   实际统计与输出折算
   bittune accept cost --suite ID --scenario NAME --price N [--gpus 1]
-  bittune accept summary --task ID             汇总任务、结果与报告入口
+  bittune accept cost-history [--task ID|--suite ID] [--limit 50] [--before ARTIFACT]
+  bittune accept cost-history --artifact ID --output FILE
+  bittune accept plan --file request.json [--output checklist.md]  准备验收清单，不执行
+  bittune accept select --task ID --goal quality|cost --pack-hash SHA256 --threshold 80 --currency CNY
+  bittune accept select --task ID --service ID --goal cost --pack-hash SHA256 --json  预览推荐配置应用，不执行
+  bittune accept summary --task ID [--output summary.md]  读取验收摘要
   bittune report list | show <id> | export <id> [--output FILE]
   bittune report revise <id> --file text.json
   bittune report extend <id> --file text-and-sources.json
   bittune compare --file points.json [--goal mean_ttft_ms]
 通用参数：--json（结构化输出）、--detach（后台执行）、--approval MODE（本次任务审批）。
-关闭终端不取消已提交任务；有待人工确认时，可从task approve继续。
+关闭终端不取消已提交任务；有待人工确认时，可从Web或task approve继续。
 `;
 
 export async function runWorkflowCli(command:string,args:string[]){
+ if(command==="backup"){
+  const p=resolveBittunePaths(),core=probeCore(),child=spawn(core.python,["-m","bittune_core.workspace_backup",...args],{stdio:"inherit",env:{...buildCoreEnv({taskScopeFile:null}),BITTUNE_BACKUP_CONTEXT:JSON.stringify({home:p.root,core:p.core,agent:p.agent,sessions:p.sessions,socket:taskSocketPath()})}});
+  process.exitCode=await new Promise<number>((resolve,reject)=>{child.on("error",reject);child.on("exit",code=>resolve(code ?? 1));});return;
+ }
  if(args.includes("--help")||args.includes("-h")||command==="workflow-help"){console.log(WORKFLOW_HELP);return;}
  const {position,values:v}=parse(args),json=v.has("json");
  const need=(key:string,fallback?:string)=>{const value=v.get(key)||fallback;if(!value)throw new Error(`缺少${key}，可查看bittune ${command} --help。`);return value;};
  const num=(key:string,fallback:number)=>{const n=v.has(key)?Number(v.get(key)):fallback;if(!Number.isFinite(n))throw new Error(`参数--${key}需要有效数值。`);return n;};
+ if(command==="accept"&&position[0]==="plan"){
+  const data=acceptancePlan(await jsonFile(v.get("file"))),text=json?JSON.stringify(data,null,2):acceptancePlanMarkdown(data);
+  if(v.get("output"))await writeFile(resolve(v.get("output")!),text,{flag:v.has("overwrite")?"w":"wx",mode:0o600});else console.log(text);return;
+ }
  const p=resolveBittunePaths(),settings=SettingsManager.create(process.cwd(),p.agent,{projectTrusted:false});
  const requested=v.get("approval");if(requested&&!isSecurityMode(requested))throw new Error("审批策略必须为manual、agent或full。");
  const mode=(requested || settings.getSecurityMode()) as SecurityMode;
@@ -57,17 +78,27 @@ export async function runWorkflowCli(command:string,args:string[]){
  const disconnect=()=>{client.close();if(!json)console.error("界面已断开，已提交任务保留并在后台继续。");process.exit(130);};
  process.once("SIGINT",disconnect);process.once("SIGTERM",disconnect);
  const emit=(value:any,human?:string)=>console.log(json?JSON.stringify(value):clean(human ?? JSON.stringify(value,null,2)));
- const show=(t:any)=>emit(t,`${t.name}\n任务编号：${t.task_id}\n状态：${states[t.state] || t.state}\n审批：${SECURITY_LABELS[t.security_mode as SecurityMode] || t.security_mode}\n${t.summary || t.error || ""}${t.pending?"\n待确认："+t.pending.title+"\n"+t.pending.message:""}`);
+ const show=(t:any)=>emit(t,`${t.name}\n任务编号：${t.task_id}\n状态：${states[t.state] || t.state}\n审批：${SECURITY_LABELS[t.security_mode as SecurityMode] || t.security_mode}\n${[t.summary,t.error&&t.error!==t.summary?"原因："+t.error:undefined].filter(Boolean).join("\n")}${t.request.kind==="assets"&&["blocked","failed","interrupted"].includes(t.state)?"\n处理原因后继续：bittune task continue "+t.task_id:""}${t.pending?"\n待确认："+t.pending.title+"\n"+t.pending.message:""}`);
  async function watch(id:string){let last="",prompted="";for(;;){const t=await client.request("task",{task_id:id});if(!json&&last!==t.updated_at){const message=t.events?.at(-1)?.message || states[t.state];if(message)console.error(clean(message));last=t.updated_at;}
    if(t.pending&&t.pending.confirmation_id!==prompted){if(!process.stdin.isTTY||json){show(t);process.exitCode=2;return t;}prompted=t.pending.confirmation_id;const rl=createInterface({input:process.stdin,output:process.stdout});try{const answer=await rl.question(clean(t.pending.title+"\n"+t.pending.message)+"\n批准？[y/N] ");await client.request("confirm",{task_id:id,confirmation_id:t.pending.confirmation_id,approved:/^(y|yes)$/i.test(answer.trim())});}finally{rl.close();}}
    if(!["queued","running","waiting_confirmation"].includes(t.state)){show(t);if(["failed","blocked","interrupted"].includes(t.state))process.exitCode=1;return t;}await new Promise(r=>setTimeout(r,700));
   }}
  async function submit(body:Record<string,any>){const t=await client.request("create",{...body,task_id:body.task_id || randomUUID(),security_mode:body.security_mode || mode});if(v.has("detach")){show(t);return t;}return watch(t.task_id);}
- async function saveArtifact(id:string){const a=await client.request("artifact",{artifact_id:id});const ext:Record<string,string>={"application/zip":"zip","application/pdf":"pdf","text/markdown":"md","application/json":"json"};const output=resolve(v.get("output") || `${id}.${ext[a.media_type] || "bin"}`);
+ async function saveArtifact(id:string,prefetched?:any){const a=prefetched || await client.request("artifact",{artifact_id:id});const ext:Record<string,string>={"application/zip":"zip","application/pdf":"pdf","text/markdown":"md","application/json":"json"};const output=resolve(v.get("output") || `${id}.${ext[a.media_type] || "bin"}`);
   for(const root of [p.core,p.agent])if(output===resolve(root)||output.startsWith(resolve(root)+sep))throw new Error("导出文件不能覆盖受管存储或配置，请选择其他目录。");
   await writeFile(output,Buffer.from(a.data_base64,"base64"),{flag:v.has("overwrite")?"w":"wx"});emit({output,artifact_id:id},`已保存：${output}`);
  }
  try{
+  if(command==="accept"&&sub==="select"){
+   const d=await client.request(v.has("service")?"selection_application":"select_saved",{current_service_id:v.get("service"),task_id:need("task"),goal:v.get("goal")||"quality",pack_hash:need("pack-hash"),threshold:num("threshold",80),currency:v.get("currency")||"CNY"});
+   if(v.has("service")){emit(d,`冻结方案：${d.plan_id}\n${d.already_applied?"当前已使用这套配置。":d.request?"请核对差异后使用runtime apply或将request保存后task start；本次未执行切换。":"请选择同模型的当前运行时。"}\n${JSON.stringify(d.differences,null,2)}`);return;}
+   emit(d,d.recommended?`推荐测量：${d.recommended.suite_result_id} · ${d.recommended.scenario_id} · 并发${d.recommended.concurrency}；未自动应用。`:`尚无满足条件的配置。\n${d.rows.map((r:any)=>r.suite_result_id+"："+r.reasons.join("；")).join("\n")}`);return;
+  }
+  if(command==="governance"&&sub==="package"){
+   const action=position[1]||"list";const overrides=action==="instantiate"&&v.has("file")?await jsonFile(v.get("file")):undefined;
+   emit(await client.request("capability_package",{action,package_id:position[2],allow_admin:true,...(action==="import"?{manifest:await jsonFile(v.get("file"))}:{}),...(overrides?{overrides}:{})}));return;
+  }
+  if(command==="governance"){emit(await client.request(sub==="capabilities"?"capability_catalog":sub==="agent"?"agent_configuration":sub==="network"?"network_diagnostics":"governance"));return;}
   if(command==="task"){
    if(sub==="worker"){emit(await client.request(position[1]==="stop"?"engine_shutdown":"engine_status"));return;}
    if(sub==="list"){const d=await client.request("tasks");emit(d,d.tasks.map((t:any)=>`${t.task_id}  ${states[t.state] || t.state}  ${t.name}`).join("\n")||"暂无任务。");return;}
@@ -85,17 +116,40 @@ export async function runWorkflowCli(command:string,args:string[]){
     if(!text){if(!process.stdin.isTTY)throw new Error("非交互模式请提供--message。");rl=createInterface({input:process.stdin,output:process.stdout});console.error(`部署模型：${meta.model}；输入/exit退出。`);}
     try{do{if(!text)text=await rl!.question("你 > ");if(text.trim()==="/exit")break;if(!text.trim()){text=undefined;continue;}messages.push({role:"user",content:text});const d=await client.request("model_chat",{service_instance_id:id,messages:messages.slice(-40),max_tokens:num("output-tokens",2048)});const answer=d.display_message?.content || d.choices?.[0]?.message?.content || "模型未给出最终文本，请增加输出预算。";emit(d,answer);messages.push({role:"assistant",content:answer});text=undefined;}while(rl);}finally{rl?.close();}return;}
    if(["stop","recover"].includes(sub)){await submit({kind:"service",name:sub==="stop"?"停止模型服务":"核对并恢复模型服务",goal:"只管理选定的受管服务",service_instance_id:id,mode:sub});return;}
-   if(["apply","rollback"].includes(sub)){await submit({kind:"switch",name:sub==="apply"?"应用运行参数":"回滚运行参数",goal:"用户选择新端点切换，沿用原生确认",service_instance_id:id,plan_id:need("plan"),mode:sub});return;}
+   if(["apply","rollback"].includes(sub)){await submit({kind:"switch",name:sub==="apply"?"应用运行参数":"回滚运行参数",goal:"用户选择新端点切换，沿用原生确认",service_instance_id:id,plan_id:need("plan"),mode:sub,...(sub==="apply"?{rollback_on_failure:v.has("rollback-on-failure")}:{})});return;}
   }
   if(command==="tune"){
    const id=need("service",position[0]),s=await client.request("records",{kind:"service_instance",id});const goal=v.get("goal") || "throughput";if(!["throughput","latency"].includes(goal))throw new Error("调优目标为throughput或latency。");
-   await submit({kind:"execute",mode:"tune",service_instance_id:id,plan_id:s.payload.plan_id,name:v.get("name") || `${s.payload.model_ref.model_id.split("/").at(-1)} · ${goal==="latency"?"响应速度":"吞吐"}调优`,goal:goal==="latency"?"mean_ttft_ms":"output_tokens_per_second",input_tokens:num("input-tokens",128),output_tokens:num("output-tokens",32),concurrency:num("concurrency",1),request_count:num("requests",4),max_trials:num("trials",1)});return;
+   const body={kind:"execute",mode:"tune",service_instance_id:id,plan_id:s.payload.plan_id,name:v.get("name") || `${s.payload.model_ref.model_id.split("/").at(-1)} · ${goal==="latency"?"响应速度":"吞吐"}调优`,goal:goal==="latency"?"mean_ttft_ms":"output_tokens_per_second",input_tokens:num("input-tokens",128),output_tokens:num("output-tokens",32),concurrency:num("concurrency",1),request_count:num("requests",4),max_trials:num("trials",1)};
+   const outline=tuningOutline(body)!;if(!json)console.error(clean(`${outline.label}（${outline.direction}）；最多${outline.configurations}套配置、${outline.formal_requests}个正式请求，另有${outline.warmup_requests}次预热。\n${outline.conditions}\n${outline.service_policy}\n${outline.scope}`));
+   await submit(body);return;
   }
   if(command==="accept"){
    if(sub==="quality"){const pack=await client.request("quality_pack",{path:v.get("pack") || ""});await submit({kind:"quality",name:"文本问答规则评测",goal:"按指定规则和预算评测选定模型，结束后保留服务",service_instance_id:need("service"),correctness_pack_path:pack.path,correctness_pack_hash:pack.pack_hash,request_count:num("requests",pack.sample_count),output_tokens:num("output-tokens",1024),quality_threshold:num("threshold",80)});return;}
    if(sub==="cost"){const d=await client.request("cost_projection",{suite_result_id:need("suite"),scenario_id:need("scenario"),concurrency:num("concurrency",1),repeat:num("repeat",1),gpu_hourly_price:num("price",Number(need("price"))),gpu_count:num("gpus",1),currency:v.get("currency") || "CNY"});const c=d.data.cost_projection;emit(d,`${c.cost_per_million_output_tokens.toFixed(4)} ${c.inputs.currency}/百万输出Token（按用户费率估算，非实际账单）`);if(v.has("output"))await saveArtifact(d.artifact_refs[0].artifact_id);return;}
+   if(sub==="cost-history"){
+    if(v.has("task")&&v.has("suite"))throw new Error("请选择任务或套件来源之一。");
+    if(v.has("artifact")){
+     need("output");const artifact=await client.request("artifact",{artifact_id:need("artifact")});
+     if(artifact.label!=="token-cost-estimate"||artifact.media_type!=="application/json")throw new Error("所选工件不是成本核算记录。");
+     const payload=JSON.parse(Buffer.from(artifact.data_base64,"base64").toString("utf8"));
+     if(v.has("suite")&&payload.source?.suite_result_id!==v.get("suite"))throw new Error("核算记录不属于所选套件。");
+     if(v.has("task")){const source=await client.request("task",{task_id:v.get("task")});if(!source.records.some((r:any)=>r.kind==="suite_result"&&r.id===payload.source?.suite_result_id))throw new Error("核算记录不属于所选任务。");}
+     await saveArtifact(artifact.artifact_id,artifact);return;
+    }
+    const history=await client.request("cost_history",{task_id:v.get("task"),suite_result_id:v.get("suite"),limit:num("limit",50),before:v.get("before")});
+    emit(history,history.estimates.map((e:any)=>`${e.cost_projection.cost_per_million_output_tokens.toFixed(4)} ${e.cost_projection.inputs.currency}/百万输出Token（估算）\n来源：${e.cost_projection.source.suite_result_id} · 并发${e.cost_projection.source.concurrency} · 第${e.cost_projection.source.repeat}次\n费率：${e.cost_projection.inputs.gpu_hourly_price} /GPU小时 · ${e.cost_projection.inputs.gpu_count}张GPU\n记录：${e.artifact_id}`).join("\n\n")+(history.unavailable.length?`\n${history.unavailable.length}条记录无法核验，未显示金额。`:"")+(history.next_cursor?`\n更多：--before ${history.next_cursor}`:"") || "没有已保存的成本估算。");return;
+   }
+   if(sub==="summary"){
+    const d=await client.request("acceptance_summary",{task_id:need("task",subject)}) as AcceptanceSummary;
+    const markdown=acceptanceMarkdown(d);
+    if(v.has("output")){
+     const output=resolve(need("output"));for(const root of [p.core,p.agent])if(output===resolve(root)||output.startsWith(resolve(root)+sep))throw new Error("摘要不能覆盖受管存储或配置，请选择其他目录。");
+     await writeFile(output,markdown,{flag:v.has("overwrite")?"w":"wx"});emit({...d,output},`已保存验收摘要：${output}`);
+    }else emit(d,markdown);
+    return;
+   }
    const t=await client.request("task",{task_id:need("task",subject)});
-   if(sub==="summary"){emit(t,`${t.name}\n状态：${states[t.state]}\n${t.records.map((r:any)=>`${r.kind}: ${r.id}${r.payload.title?" · "+r.payload.title:""}`).join("\n")}`);return;}
    if(sub==="output"){const rows=[];for(const suite of t.records.filter((r:any)=>r.kind==="suite_result"))for(const row of suite.payload.rows || [])rows.push({suite_result_id:suite.id,scenario_id:row.scenario_id,concurrency:row.concurrency,repeat:row.repeat || 1,...await client.request("accounting",{suite_result_id:suite.id,scenario_id:row.scenario_id,concurrency:row.concurrency,repeat:row.repeat || 1,hours:num("hours",1)})});emit({task_id:t.task_id,rows},rows.map(r=>`${r.suite_result_id} 并发${r.concurrency}\n实际输入/输出Token：${r.observed.input_tokens_total ?? "未记录"}/${r.observed.output_tokens_total ?? "未记录"}\n输出速度：${r.observed.output_tokens_per_second ?? "未记录"} Token/秒\n${r.estimated.hours}小时输出折算：${r.estimated.output_tokens===null?"不可估算":Math.round(r.estimated.output_tokens)+" Token（估算）"}`).join("\n\n"));return;}
   }
   if(command==="report"){

@@ -44,13 +44,16 @@ const MODEL_REF = Type.Union([
 		quantization: Type.Optional(Type.String()),
 	}, { additionalProperties: false, description: "已有本地目录；identity 由 Core 生成" }),
 ]);
-const RUNTIME_SPEC = Type.Object({
+const RUNTIME_SPEC_FIELDS = {
 	schema_version: Type.Literal(1),
 	runtime_kind: Type.Union([Type.Literal("vllm"), Type.Literal("sglang")]),
 	image_repository: Type.String({ description: "已核验的本机镜像 repository，不含 tag 或 @digest", pattern: "^[a-z0-9][a-z0-9._:/-]{0,255}$" }),
-	image_digest: Type.String({ description: "实际镜像 digest；不得用占位符探测接口", pattern: "^sha256:(?!0{64}$)[a-f0-9]{64}$" }),
 	runtime_major: Type.Optional(Type.String({ pattern: "^[0-9]{1,16}$" })),
-}, { additionalProperties: false });
+};
+const RUNTIME_SPEC = Type.Union([
+	Type.Object({ ...RUNTIME_SPEC_FIELDS, image_digest: Type.String({ pattern: "^sha256:(?!0{64}$)[a-f0-9]{64}$", description: "仓库清单摘要" }) }, { additionalProperties: false }),
+	Type.Object({ ...RUNTIME_SPEC_FIELDS, image_id: Type.String({ pattern: "^sha256:(?!0{64}$)[a-f0-9]{64}$", description: "本机已存在的 Docker 完整镜像 ID，只用于本地部署" }) }, { additionalProperties: false }),
+]);
 const WORKLOAD_FIELDS = {
 	schema_version: Type.Literal(2),
 	concurrency: Type.Integer({ minimum: 1, maximum: 4096 }),
@@ -67,8 +70,8 @@ const WORKLOAD = Type.Union([
 	Type.Object({ ...WORKLOAD_FIELDS, mode: Type.Literal("closed_loop") }, { additionalProperties: false }),
 	Type.Object({ ...WORKLOAD_FIELDS, mode: Type.Literal("open_loop"), request_rate: Type.Number({ exclusiveMinimum: 0 }) }, { additionalProperties: false }),
 ], { description: "schema_version=2；固定 token-ID 合成负载，input_tokens 含前缀，需要 /v1/completions 支持 token IDs；Core 核验实际 token 数并冻结 workload hash" });
-function adapterSchema(parameters: readonly { name: string; type: string; default: unknown; values?: readonly string[]; minimum?: number; maximum?: number; exclusive_minimum?: boolean; unit?: string }[], description: string) {
-	const properties: Record<string, TSchema> = {};
+function adapterSchema(parameters: readonly { name: string; type: string; default: unknown; values?: readonly string[]; minimum?: number; maximum?: number; exclusive_minimum?: boolean; unit?: string }[], description: string, extraProperties: Record<string, TSchema> = {}) {
+	const properties: Record<string, TSchema> = { ...extraProperties };
 	for (const parameter of parameters) {
 		const options = { default: parameter.default, description: parameter.unit ? `单位：${parameter.unit}` : parameter.name };
 		const bounds = { ...(parameter.minimum !== undefined ? { [parameter.exclusive_minimum ? "exclusiveMinimum" : "minimum"]: parameter.minimum } : {}), ...(parameter.maximum !== undefined ? { maximum: parameter.maximum } : {}) };
@@ -86,7 +89,11 @@ function adapterSchema(parameters: readonly { name: string; type: string; defaul
 	return Type.Object(properties, { additionalProperties: false, description });
 }
 const SERVING_SPEC = Type.Union([
-	adapterSchema(MANAGED_PARAMETERS.vllm, "vLLM 当前受管参数；省略字段使用 Core 默认值"),
+	adapterSchema(MANAGED_PARAMETERS.vllm, "vLLM 当前受管参数；省略字段使用 Core 默认值", {
+		language_model_only: Type.Optional(Type.Boolean()),
+		tool_call_parser: Type.Optional(Type.String({ pattern: "^[a-z0-9][a-z0-9_-]{0,63}$" })),
+		reasoning_parser: Type.Optional(Type.String({ pattern: "^[a-z0-9][a-z0-9_-]{0,63}$" })),
+	}),
 	adapterSchema(MANAGED_PARAMETERS.sglang, "SGLang 当前受管参数；省略字段使用 Core 默认值"),
 ]);
 const LOOPBACK_ENDPOINT = Type.Object(
@@ -233,7 +240,7 @@ const Schemas = {
 			based_on_report_id: optionalString("原样保留已有报告全部引用，只修改文本；禁止重传引用数组"),
 			suite_selections: Type.Optional(Type.Array(Type.Object({
 				suite_result_id: Type.String(), metrics: Type.Array(Type.String(), { minItems: 1, uniqueItems: true }),
-			}, { additionalProperties: false }), { minItems: 1, description: "完整套件报告用此紧凑选择；Core覆盖全部行与重复点，不手抄suite_claims" })),
+			}, { additionalProperties: false }), { minItems: 1, description: "完整套件报告用此紧凑选择；Core覆盖全部行与重复点。传入suite_selections时必须省略suite_claims字段" })),
 			title: Type.String({ description: "报告标题" }),
 			scope: optionalString("范围：用户目标与实际尝试"),
 			narrative: Type.String({ description: "叙述：解释与限制（含估算时显式标注 estimated）" }),
@@ -504,6 +511,7 @@ function makeExecute(
 								return { content: [{ type: "text", text: "审批未通过：未调用Core执行此操作。" }], details: { code: "user_declined" } };
 							}
 						}
+
 						if (toolName === "benchmark_suite") {
 							requestParams.destructive_authorized = destructiveSuite;
 						}

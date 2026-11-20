@@ -16,7 +16,7 @@ from typing import Any
 from bittune_core.adapters import inspect_image_cli, require_adapter
 from bittune_core.inspect import probe_gpu_processes
 from bittune_core.contracts import ContractError
-from bittune_core.plans import model_path_in_container, resolve_image, resolve_model_snapshot, validate_plan
+from bittune_core.plans import image_reference, model_path_in_container, resolve_image, resolve_model_snapshot, validate_plan
 from bittune_core.process import run_command, wait_interval
 from bittune_core.runs import ManagedRun
 from bittune_core.store import CoreStore, utc_now
@@ -81,7 +81,7 @@ def _start(params: dict[str, Any], store: CoreStore, run: ManagedRun, cancellati
     if image is None:
         raise ContractError(
             "image_missing",
-            f"本地没有镜像 {runtime_spec['image_repository']}@{runtime_spec['image_digest']}。",
+            f"本地没有镜像 {image_reference(runtime_spec)}。",
             remediation="Core 不隐式拉取镜像；用 Bash 执行 docker pull 后重试。",
         )
     mount = resolve_model_snapshot(model_ref["model_id"], model_ref["revision"], model_ref.get("local_path"), cancellation)
@@ -113,10 +113,10 @@ def _start(params: dict[str, Any], store: CoreStore, run: ManagedRun, cancellati
     )
     run.progress(f"启动受管 {runtime_spec['runtime_kind']} 容器 {container_name}…")
     if task_scope is not None and task_scope.document.get("require_idle_gpu"):
-        activity = probe_gpu_processes(cancellation)
+        activity = probe_gpu_processes(cancellation, serving_spec.get("gpu_device_ids"))
         run.artifact("pre-start-gpu-processes", activity["raw"])
         if activity["busy"]:
-            raise ContractError("resource_busy", "GPU仍有计算进程，未启动新容器；等待空闲后再明确执行。")
+            raise ContractError("resource_busy", "所选GPU仍有计算进程，未启动新容器；等待空闲后再明确执行。")
     started = run_command(layout, timeout_seconds=120, max_bytes=1024 * 1024, cancellation=cancellation)
     run.artifact("docker-run", f"$ {' '.join(layout)}\n{started['stdout']}\n{started['stderr']}")
     if started["exit_code"] != 0:

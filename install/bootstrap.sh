@@ -46,17 +46,22 @@ download_node() {
   if has curl; then curl --fail --location --proto '=https' --tlsv1.2 "${url}" --output "${archive}"; else wget -O "${archive}" "${url}"; fi
   local digest; digest="$(sha256sum "${archive}" | awk '{print $1}')"; [[ ${digest} == "${NODE_SHA256}" ]] || die "Node.js SHA-256 verification failed."
   tar -xJf "${archive}" -C "${stage}"; [[ -x "${stage}/node-${NODE_VERSION}-linux-x64/bin/node" ]] || die "Node.js archive is incomplete."
-  rm -rf "${INSTALL_ROOT}/node"; mv "${stage}/node-${NODE_VERSION}-linux-x64" "${INSTALL_ROOT}/node"; rm -rf "${stage}"
+  # The installer owns replacement after taking its paired software snapshot.
 }
 main() {
   local target_user="root"
   mkdir -p "${INSTALL_ROOT}/staging" "${INSTALL_ROOT}/backups"
-  local node_bin="${INSTALL_ROOT}/node/bin/node" offline=false
+  BOOTSTRAP_STAGE="$(mktemp -d "${INSTALL_ROOT}/staging/bootstrap.XXXXXX")"
+  trap 'rm -rf -- "${BOOTSTRAP_STAGE}"' EXIT
+  local node_bin="${INSTALL_ROOT}/node/bin/node" offline=false node_archive=""
+  if grep -q '"package_type": "offline"' "${SCRIPT_DIR}/manifest.json" && [[ ! -x "${SCRIPT_DIR}/node-${NODE_VERSION}-linux-x64/bin/node" ]]; then die "Offline package is missing its bundled Node.js runtime."; fi
   if [[ -x "${SCRIPT_DIR}/node-${NODE_VERSION}-linux-x64/bin/node" ]]; then
-    offline=true; if [[ ! -x ${node_bin} ]]; then rm -rf "${INSTALL_ROOT}/node"; cp -a "${SCRIPT_DIR}/node-${NODE_VERSION}-linux-x64" "${INSTALL_ROOT}/node"; fi
+    offline=true; node_bin="${SCRIPT_DIR}/node-${NODE_VERSION}-linux-x64/bin/node"
   elif [[ ! -x ${node_bin} || "$("${node_bin}" --version 2>/dev/null || true)" != "${NODE_VERSION}" ]]; then
     install_system_tools
-    download_node "${INSTALL_ROOT}/staging/node"
+    download_node "${BOOTSTRAP_STAGE}/node"
+    node_bin="${BOOTSTRAP_STAGE}/node/node-${NODE_VERSION}-linux-x64/bin/node"
+    node_archive="${BOOTSTRAP_STAGE}/node/node.tar.xz"
   fi
   if [[ ${offline} == true ]]; then
     check_offline_tools
@@ -64,20 +69,17 @@ main() {
     install_system_tools
   fi
   if grep -q '"package_type": "offline"' "${SCRIPT_DIR}/manifest.json" && [[ ${offline} != true ]]; then die "Offline package is missing its bundled Node.js runtime."; fi
-	  node_bin="${INSTALL_ROOT}/node/bin/node"
 	  local args
   if [[ ${offline} == true ]]; then
     args=(install --offline "${SCRIPT_DIR}" --user "${target_user}" --yes --requirements "${SCRIPT_DIR}/requirements.txt" --core-wheel-dir "${SCRIPT_DIR}/core-wheel")
   else
-    local payload_dir="${INSTALL_ROOT}/staging/payload/package"
-    rm -rf "${INSTALL_ROOT}/staging/payload"
+    local payload_dir="${BOOTSTRAP_STAGE}/payload/package"
     mkdir -p "${payload_dir}"
     cp -a "${SCRIPT_DIR}/agent/." "${payload_dir}/"
-    tar -czf "${INSTALL_ROOT}/staging/bittune-payload.tar.gz" -C "${INSTALL_ROOT}/staging/payload" package
-    args=(install --package "${INSTALL_ROOT}/staging/bittune-payload.tar.gz" --user "${target_user}" --yes --requirements "${SCRIPT_DIR}/requirements.txt" --core-wheel-dir "${SCRIPT_DIR}/core-wheel")
+    tar -czf "${BOOTSTRAP_STAGE}/bittune-payload.tar.gz" -C "${BOOTSTRAP_STAGE}/payload" package
+    args=(install --package "${BOOTSTRAP_STAGE}/bittune-payload.tar.gz" --user "${target_user}" --yes --requirements "${SCRIPT_DIR}/requirements.txt" --core-wheel-dir "${SCRIPT_DIR}/core-wheel")
   fi
-  log "Installing Bittune for ${target_user}..."; "${node_bin}" "${SCRIPT_DIR}/agent/dist/bittune.js" "${args[@]}"
-  rm -rf "${INSTALL_ROOT}/staging/bittune-payload.tar.gz" "${INSTALL_ROOT}/staging/payload"
+  log "Installing Bittune for ${target_user}..."; BITTUNE_BOOTSTRAP_NODE_ARCHIVE="${node_archive}" "${node_bin}" "${SCRIPT_DIR}/agent/dist/bittune.js" "${args[@]}"
   log "Installed. Run 'bittune version' as root from any directory."
 }
 main "$@"

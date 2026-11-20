@@ -5,6 +5,7 @@ export function validateTaskInput(p:Record<string,any>){
  if(!/^[a-f0-9-]{36}$/i.test(p.task_id)||typeof p.name!=="string"||!p.name.trim()||p.name.length>120||typeof p.goal!=="string"||p.goal.length>4000)fail("任务需要有效编号、名称及目标。");
  if(!["recommend","prepare","execute","service","report","assets","compare","switch","quality","delivery"].includes(p.kind))fail("任务类型无效。");
  if(p.security_mode!==undefined&&!["manual","agent","full"].includes(p.security_mode))fail("审批策略无效。");
+ if(p.rollback_on_failure!==undefined&&(typeof p.rollback_on_failure!=="boolean"||p.kind!=="switch"||p.mode!=="apply"))fail("失败回滚只适用于明确的配置应用任务。");
  if(p.kind==="execute"||p.kind==="prepare"||p.kind==="recommend"){
   if(!["deploy","benchmark","tune"].includes(p.mode))fail("执行范围无效。");
   if(p.mode!=="deploy"&&(!integer(p.input_tokens,1,1048576)||!integer(p.output_tokens,1,1048576)||p.input_tokens+p.output_tokens>1048576||!integer(p.request_count,1,64)||!integer(p.concurrency,1,16)||!integer(p.max_trials,0,3)))fail("Token、请求或候选预算无效。");
@@ -16,6 +17,7 @@ export function validateTaskInput(p:Record<string,any>){
  if(p.kind==="switch"&&(!id("plan",p.plan_id)||!["apply","rollback"].includes(p.mode)))fail("切换需要冻结计划及应用/回滚方式。");
  if(p.kind==="quality"&&(!integer(p.request_count,1,64)||!integer(p.output_tokens,1,8192)||typeof p.quality_threshold!=="number"||p.quality_threshold<1||p.quality_threshold>100||!/^sha256:[a-f0-9]{64}$/.test(p.correctness_pack_hash)))fail("质量包或评测预算无效。");
  if(["report","delivery"].includes(p.kind)&&!id("report",p.source_report_id))fail("需要有效的来源报告编号。");
+ if(p.report_ids!==undefined&&(p.kind!=="delivery"||!Array.isArray(p.report_ids)||p.report_ids.length<1||p.report_ids.length>20||new Set(p.report_ids).size!==p.report_ids.length||p.report_ids.some((v:unknown)=>!id("report",v))||p.report_ids[0]!==p.source_report_id))fail("批量交付需1至20份不重复报告，首份与来源编号一致。");
  if(p.kind==="delivery"&&!["report_bundle","signed_pdf"].includes(p.mode))fail("报告导出方式无效。");
  if(p.kind==="report"&&(!["revise","extend"].includes(p.mode)||!p.report_text||Array.isArray(p.report_text)||Object.entries(p.report_text).some(([k,v])=>!["title","scope","narrative","conclusion"].includes(k)||typeof v!=="string"||v.length>12000)))fail("报告修改字段无效。");
  if(p.kind==="report"&&p.mode==="extend"&&(!Array.isArray(p.suite_result_ids)||p.suite_result_ids.some((v:unknown)=>!id("suite",v))))fail("补充来源需要套件编号列表。");

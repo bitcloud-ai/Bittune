@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 TESTS_ROOT = Path(__file__).resolve().parent
@@ -13,7 +14,7 @@ sys.path.insert(0, str(TESTS_ROOT))
 
 from bittune_core.adapters import require_adapter  # noqa: E402
 from bittune_core.contracts import ContractError  # noqa: E402
-from bittune_core.plans import _normalize_model_ref, _normalize_runtime_spec, plan_deployment, resolve_model_snapshot, model_path_in_container  # noqa: E402
+from bittune_core.plans import _normalize_model_ref, _normalize_runtime_spec, plan_deployment, resolve_image, resolve_model_snapshot, model_path_in_container  # noqa: E402
 from bittune_core.store import CoreStore  # noqa: E402
 from test_services_fake_docker import TWO_GPUS, FakeCore, plan_create_request  # noqa: E402
 
@@ -60,6 +61,40 @@ class PlanContractTest(unittest.TestCase):
         with self.assertRaises(ContractError) as raised:
             _normalize_runtime_spec({"schema_version": 1, "runtime_kind": "vllm", "image_repository": "vllm/vllm-openai", "image_digest": "sha256:" + "0" * 64})
         self.assertEqual(raised.exception.code, "invalid_input")
+
+    def test_local_image_id_requires_matching_id_and_repository(self) -> None:
+        image_id = "sha256:" + "a" * 64
+        spec = _normalize_runtime_spec({
+            "schema_version": 1, "runtime_kind": "vllm",
+            "image_repository": "vllm/vllm-openai", "image_id": image_id,
+        })
+        image = {"Id": image_id, "RepoTags": ["vllm/vllm-openai:v0.33.0"], "RepoDigests": []}
+        with patch("bittune_core.plans.run_command") as docker:
+            docker.return_value = {"exit_code": 0, "stdout": json.dumps(image)}
+            self.assertEqual(resolve_image(spec, None)["run_reference"], image_id)
+            self.assertEqual(docker.call_args.args[0][3], image_id)
+            image["RepoTags"] = ["other/image:v0.33.0"]
+            docker.return_value["stdout"] = json.dumps(image)
+            self.assertIsNone(resolve_image(spec, None))
+        with self.assertRaises(ContractError):
+            _normalize_runtime_spec({**spec, "image_digest": image_id})
+
+    def test_vllm_optional_builtin_parsers_require_image_flags(self) -> None:
+        adapter = require_adapter("vllm")
+        flags = ["--enable-auto-tool-choice", "--tool-call-parser", "--reasoning-parser"]
+        self.assertEqual(adapter.compile_engine_args({}, flags), [])
+        config = {"tool_call_parser": "qwen3_xml", "reasoning_parser": "qwen3"}
+        self.assertEqual(adapter.compile_engine_args(config, flags), [
+            "--enable-auto-tool-choice", "--tool-call-parser", "qwen3_xml", "--reasoning-parser", "qwen3",
+        ])
+        with self.assertRaises(ContractError):
+            adapter.compile_engine_args(config, flags[1:])
+
+    def test_vllm_prefix_cache_disable_uses_supported_cli_alias(self) -> None:
+        adapter = require_adapter("vllm")
+        config = {"enable_prefix_caching": False}
+        for alias in ("--no-enable-prefix-caching", "--disable-prefix-caching"):
+            self.assertEqual(adapter.compile_engine_args(config, [alias]), [alias])
 
     def test_local_frozen_plan_refuses_changed_weights_at_start(self) -> None:
         from bittune_core.services import deploy_service
@@ -262,8 +297,6 @@ class PlanContractTest(unittest.TestCase):
             "SELECT 1 FROM artifacts WHERE label IN ('cloud-recommendation', 'cloud-recommendation-attempt')"
         ).fetchone()
         self.assertIsNone(row)
-
-
 
     def test_validate_and_freeze_reject_create_only_fields(self) -> None:
         snapshot_id = self.snapshot_id()

@@ -300,8 +300,12 @@ def inspect_service(params: dict[str, Any], context: dict[str, Any]) -> dict[str
         return run.success(summary, {"services": services, "untracked": untracked})
 
 
-def probe_gpu_processes(cancellation=None) -> dict[str, Any]:
-    result = run_command(["nvidia-smi", "--query-compute-apps=pid,process_name,used_memory", "--format=csv,noheader"], timeout_seconds=15, cancellation=cancellation)
+def probe_gpu_processes(cancellation=None, gpu_device_ids: list[int] | None = None) -> dict[str, Any]:
+    args = ["nvidia-smi"]
+    if gpu_device_ids:
+        args.append("--id=" + ",".join(str(index) for index in gpu_device_ids))
+    args += ["--query-compute-apps=pid,process_name,used_memory", "--format=csv,noheader"]
+    result = run_command(args, timeout_seconds=15, cancellation=cancellation)
     if result["exit_code"] != 0:
         raise ContractError("resource_status_unavailable", "无法确认GPU进程状态，不开始部署。")
     rows = [line for line in result["stdout"].splitlines() if line.strip() and "No running processes" not in line]
@@ -310,11 +314,14 @@ def probe_gpu_processes(cancellation=None) -> dict[str, Any]:
 
 def gpu_activity(params: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     with ManagedRun(context["store"], "inspect_environment", {"activity_only": True}, context["session_id"], context) as run:
-        data = probe_gpu_processes(context["cancellation"])
         source_id = params.get("service_instance_id")
-        if source_id:
+        plan_id = params.get("plan_id")
+        store = context["store"]
+        service = store.get_fact("service_instance", source_id)["payload"] if source_id else None
+        allocation = service or (store.get_fact("deployment_plan", plan_id)["payload"] if plan_id else {})
+        data = probe_gpu_processes(context["cancellation"], allocation.get("serving_spec", {}).get("gpu_device_ids"))
+        if service:
             from bittune_core.services import _inspect_container, _require_label_proof
-            service = context["store"].get_fact("service_instance", source_id)["payload"]
             if service.get("ownership") != "managed" or not service.get("container_id"):
                 raise ContractError("service_not_managed", "只能核对所选受管运行时的GPU归属。")
             state = _inspect_container(service["container_id"], context["cancellation"])

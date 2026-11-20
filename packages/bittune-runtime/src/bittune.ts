@@ -190,6 +190,7 @@ const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: 
 }
 
 export async function createBittuneRuntime(options: CreateBittuneRuntimeOptions = {}) {
+  const {assertInstallationAvailable}=await import("./cli/install/guard.ts");await assertInstallationAvailable();
 	const cwd = resolve(options.cwd ?? process.cwd());
 	const paths = resolveBittunePaths(options.paths);
 	await ensureDirectories(paths);
@@ -218,13 +219,18 @@ Usage:
   bittune [message]
   bittune --session <id> [message]
   bittune install --package <tgz> | --offline <bundle-dir> [options]
+  bittune install --list-backups [--json]
+  bittune install --rollback <backup-id> [--check-only] [--yes] [--json]
   bittune configure --base-url <url> --model-id <id> [options]
   bittune doctor
   bittune task | runtime | tune | accept | report | compare | security --help
-  bittune version
+  bittune version [--json]
 
 Commands:
   install     Install/upgrade the Bittune runtime on this host
+              --software-only Skip Docker/driver/GPU probes; validate software components only
+              --list-backups List paired software backups
+              --rollback ID  Restore one backup; --check-only previews without hardware checks
               --check-only   Preflight report; modifies nothing
               --offline DIR  Install from an offline bundle directory
               --user NAME    Linux user that will run Bittune
@@ -232,7 +238,7 @@ Commands:
               --json         Machine-readable plan/report
   configure   Configure the Bittune Agent LLM
   doctor      Check Bittune runtime, Python Core and local configuration
-  version     Print the Bittune version
+  version     Print the Bittune version; --json reads component versions without starting tasks
 
 Options:
   --base-url <url>       OpenAI-compatible endpoint base URL
@@ -367,6 +373,7 @@ export async function runBittuneCli(argv: string[]): Promise<void> {
 		return;
 	}
 	if (invocation.kind === "version") {
+		if(invocation.json){const {componentVersions}=await import("./cli/version-info.ts");console.log(JSON.stringify(await componentVersions()));return;}
 		console.log(`Bittune ${VERSION}`);
 		return;
 	}

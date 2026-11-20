@@ -7,6 +7,9 @@ export interface BittuneConfigureOptions {
 }
 
 export interface BittuneInstallOptions {
+  softwareOnly?:boolean;
+	listBackups?: boolean;
+	rollbackId?: string;
 	checkOnly: boolean;
 	json: boolean;
 	yes: boolean;
@@ -23,7 +26,7 @@ export interface BittuneInstallOptions {
 
 export type BittuneCliInvocation =
 	| { kind: "help" }
-	| { kind: "version" }
+	| { kind: "version"; json?: boolean }
 	| { kind: "doctor" }
 	| { kind: "install"; options: BittuneInstallOptions }
 	| { kind: "configure"; options: BittuneConfigureOptions }
@@ -107,6 +110,9 @@ function parseInstall(args: string[]): BittuneCliInvocation {
 			return next;
 		};
 		switch (arg) {
+      case "--software-only": options.softwareOnly = true; break;
+			case "--list-backups": options.listBackups = true; break;
+			case "--rollback": options.rollbackId = value(); break;
 			case "--check-only": options.checkOnly = true; break;
 			case "--json": options.json = true; break;
 			case "--yes": options.yes = true; break;
@@ -119,6 +125,8 @@ function parseInstall(args: string[]): BittuneCliInvocation {
 			default: throw usageError(`Unknown option \"${arg}\" for bittune install.`);
 		}
 	}
+	if(options.listBackups&&options.rollbackId)throw usageError("--list-backups与--rollback只能选择一个。");
+	if((options.listBackups||options.rollbackId)&&(options.packagePath||options.bundleDir||options.stageDir||options.requirementsPath||options.coreWheelDir))throw usageError("软件回退命令不能同时提供新的安装源。");
 	return { kind: "install", options };
 }
 
@@ -130,12 +138,13 @@ export function parseBittuneCliArguments(argv: string[]): BittuneCliInvocation {
 		return { kind: "help" };
 	}
 	if (command === "--version" || command === "-v" || command === "version") {
+		if(args.length===1&&args[0]==="--json")return {kind:"version",json:true};
 		if (args.length > 0) throw usageError(`Unexpected argument \"${args[0]}\" for version.`);
 		return { kind: "version" };
 	}
 	if (command === "configure") return parseConfigure(args);
 	if (command === "install") return parseInstall(args);
-	if(["task","runtime","tune","accept","report","compare","security"].includes(command))return {kind:"workflow",command,args};
+	if(["task","runtime","tune","accept","report","compare","security","backup","governance"].includes(command))return {kind:"workflow",command,args};
 	if (command === "doctor") {
 		if (args.length > 0) throw usageError("The doctor command does not accept arguments.");
 		return { kind: "doctor" };

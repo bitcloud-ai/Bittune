@@ -41,9 +41,9 @@ type PtyRun = {
 function spawnBittunePty(args: string[], env: NodeJS.ProcessEnv): PtyRun {
 	const command = [
 		process.execPath,
-		"--import",
-		"tsx",
-		join(repoRoot, "packages/bittune-runtime/src/bittune.ts"),
+		...(process.env.BITTUNE_TEST_CLI_JS ? [process.env.BITTUNE_TEST_CLI_JS] : [
+			"--import", "tsx", join(repoRoot, "packages/bittune-runtime/src/bittune.ts"),
+		]),
 		...args,
 	]
 		.map(shellQuote)

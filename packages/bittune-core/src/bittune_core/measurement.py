@@ -46,7 +46,8 @@ def cache_context(service):
     runtime = (service.get('runtime_spec') or {}).get('runtime_kind')
     proof_ids = all(isinstance(service.get(k), str) and service[k] for k in ('service_instance_id','plan_id','config_hash'))
     controlled = proof_ids and service.get('binding') != 'declared' and service.get('ownership') == 'managed' and (
-        (runtime == 'vllm' and spec.get('enable_prefix_caching') is False and '--no-enable-prefix-caching' in args) or
+        (runtime == 'vllm' and spec.get('enable_prefix_caching') is False and
+         any(flag in args for flag in ('--no-enable-prefix-caching', '--disable-prefix-caching'))) or
         (runtime == 'sglang' and spec.get('disable_radix_cache') is True and '--disable-radix-cache' in args))
     return {'mode': 'disabled' if controlled else 'uncontrolled',
             'proof': {'service_instance_id': service.get('service_instance_id'), 'plan_id': service.get('plan_id'),

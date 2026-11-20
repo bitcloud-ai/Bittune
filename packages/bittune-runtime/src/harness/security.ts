@@ -13,7 +13,7 @@ export interface ApprovalDecision {decision:"approve"|"deny"|"ask";reason:string
 const decisionTool={name:"approval_decision",description:"记录对此单个动作的审批决定，不执行动作。",parameters:Type.Object({decision:Type.Union([Type.Literal("approve"),Type.Literal("deny"),Type.Literal("ask")]),reason:Type.String()},{additionalProperties:false})};
 
 export function approvalProjection(request:ApprovalRequest) {
- const allowed=new Set(["action","intent","plan_id","service_instance_id","model_id","runtime_kind","image_repository","image_digest","concurrency","request_count","input_tokens","output_tokens","ready_timeout_seconds","report_id","destructive"]);
+ const allowed=new Set(["action","intent","plan_id","service_instance_id","model_id","runtime_kind","image_repository","image_digest","image_id","concurrency","request_count","input_tokens","output_tokens","ready_timeout_seconds","report_id","destructive"]);
  const params=Object.fromEntries(Object.entries(request.params || {}).filter(([k,v])=>allowed.has(k)&&["string","number","boolean"].includes(typeof v)));
  return {title:request.title,goal:request.goal,context:request.context,tool:request.tool,params,summary:request.message.slice(0,1800)};
 }
