@@ -8,6 +8,7 @@ import {tmpdir} from "node:os";
 import {fileURLToPath} from "node:url";
 import {resolveBittunePaths} from "../core/bittune-paths.ts";
 import {VERSION} from "../config.ts";
+import {assertInstallationAvailable} from "../cli/install/guard.ts";
 
 export function taskSocketPath(){
  const p=resolveBittunePaths();const key=createHash("sha256").update(JSON.stringify([resolve(p.root),resolve(p.core),resolve(p.agent),resolve(p.sessions)])).digest("hex").slice(0,20);
@@ -27,11 +28,13 @@ export class TaskClient {
   socket.on("close",()=>{for(const p of this.pending.values())p.reject(new Error("共享任务连接已关闭；任务结果保留，请重新查看状态。"));this.pending.clear();});
  }
  static async connect(start=true,matchVersion=true):Promise<TaskClient>{
+  if(start)await assertInstallationAvailable();
   if(process.platform==="win32")throw new Error("共享后台任务目前支持Linux/macOS；原CLI交互入口仍可使用。");
   const path=taskSocketPath();checkSocket(path);
   const attempt=()=>new Promise<TaskClient>((resolve,reject)=>{const s=createConnection(path);s.once("error",reject);s.once("connect",()=>{s.removeListener("error",reject);s.on("error",()=>{});resolve(new TaskClient(s));});});
   let client:TaskClient|undefined;
   try{client=await attempt();}catch(error){if(!start)throw error;}
+  if(!client&&process.env.BITTUNE_TASK_WORKER_MANAGED==="1")throw new Error("后台任务服务尚未就绪，请稍后重试；已有任务保留，不会在Web进程内另起任务服务。");
   if(!client){
    const p=resolveBittunePaths();mkdirSync(p.logs,{recursive:true,mode:0o700});const log=openSync(join(p.logs,"task-worker.log"),"a",0o600);
    const child=spawn(process.execPath,[workerEntry()],{cwd:process.cwd(),detached:true,stdio:["ignore",log,log],env:Object.fromEntries(Object.entries(process.env).filter(([k])=>!["BITTUNE_HOST_API_TOKEN","SESSION_SECRET","OIDC_CLIENT_SECRET","BITTUNE_TASK_SCOPE_FILE"].includes(k)))});child.on("error",()=>{});child.unref();closeSync(log);

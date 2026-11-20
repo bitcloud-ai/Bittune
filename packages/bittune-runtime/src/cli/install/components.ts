@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream, existsSync, readdirSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile, readdir, readlink } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { VERSION } from "../../config.ts";
 import { runCommand } from "../../utils/command-runner.ts";
@@ -121,6 +121,7 @@ export interface ComponentDefinition {
 function nodeRoot(ctx: InstallContext): string { return join(ctx.installRoot, "node"); }
 function agentRoot(ctx: InstallContext): string { return join(ctx.installRoot, "agent"); }
 function pyRoot(ctx: InstallContext): string { return join(ctx.installRoot, "py"); }
+export function installationLauncherPath(){return resolve(process.env.BITTUNE_LAUNCHER_PATH?.trim() || "/usr/local/bin/bittune");}
 function backupPath(ctx: InstallContext, name: string): string {
   return join(ctx.installRoot, "backups", `${name}-${uniqueStamp()}`);
 }
@@ -147,24 +148,36 @@ function coreWheelVersion(wheel: string): string {
 }
 
 /** Moves `source` to `destination`, archiving any existing directory into backups first. */
-async function replaceDirectory(source: string, destination: string, makeBackup: () => string): Promise<void> {
+export async function replaceDirectory(source: string, destination: string, makeBackup: () => string): Promise<void> {
   await mkdir(dirname(destination), { recursive: true });
+  let backup:string|undefined;
   if (existsSync(destination)) {
-    const backup = makeBackup();
+    backup = makeBackup();
     await mkdir(dirname(backup), { recursive: true });
     await renameOrPurge(destination, backup);
   }
-  await renameOrPurge(source, destination);
+  try {
+    await renameOrPurge(source, destination);
+  } catch (error) {
+    if (backup) {
+      try {
+        // A failed cross-device copy may have left a partial new destination.
+        await rm(destination, {recursive:true,force:true});
+        await renameOrPurge(backup, destination);
+      }
+      catch (restoreError) { throw new AggregateError([error,restoreError],`软件替换失败，原版本仍保存在 ${backup}，自动恢复未完成。`); }
+    }
+    throw error;
+  }
 }
 
 async function renameOrPurge(from: string, to: string): Promise<void> {
   try {
     await import("node:fs/promises").then((fs) => fs.rename(from, to));
-  } catch {
-    // Cross-device or locked fallback is not worth bespoke handling here; the
-    // original either moves by copy+delete semantics via cp in callers or dies
-    // loudly in the verify phase.
-    await sh("cp", ["-a", from, to], () => undefined, 600_000);
+  } catch (error) {
+    if((error as NodeJS.ErrnoException).code!=="EXDEV")throw error;
+    const copied=await sh("cp", ["-a", from, to], () => undefined, 600_000);
+    if(copied.exit_code!==0)throw new Error(`软件目录复制失败，源目录已保留：${from}`);
     await rm(from, { recursive: true, force: true });
   }
 }
@@ -200,9 +213,10 @@ async function readInstallMarker(root: string): Promise<InstallMarker | undefine
   }
 }
 
-async function writeInstallMarker(ctx: InstallContext, updates: { distSha?: string; coreWheelSha?: string }): Promise<void> {
+export async function writeInstallMarker(ctx: InstallContext, updates: { distSha?: string; coreWheelSha?: string }): Promise<void> {
   const previous = await readInstallMarker(agentRoot(ctx));
-  const coreWheelSha = updates.coreWheelSha ?? previous?.core_wheel_sha256;
+  // Replacing the Agent must not certify a Core wheel that has not been installed.
+  const coreWheelSha = updates.distSha !== undefined ? undefined : updates.coreWheelSha ?? previous?.core_wheel_sha256;
   const marker: InstallMarker = {
     version: VERSION,
     dist_sha256: updates.distSha ?? previous?.dist_sha256 ?? "",
@@ -213,10 +227,24 @@ async function writeInstallMarker(ctx: InstallContext, updates: { distSha?: stri
 
 const INCOMING_DIST_ENTRIES = ["package/dist/bittune.js", "package/dist/task-worker.js"];
 
-// A worker-only update must invalidate the install marker too.
+// The same version may contain new skills, themes or vendor assets too.
 async function agentDistSha(dist: string): Promise<string> {
-  const hashes = await Promise.all(["bittune.js", "task-worker.js"].map(name => fileSha256(join(dist, name))));
-  return createHash("sha256").update(hashes.join(":" )).digest("hex");
+  const hash=createHash("sha256");
+  async function directory(path:string,label:string):Promise<void>{
+    const entries=await readdir(path,{withFileTypes:true});
+    entries.sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:0);
+    for(const entry of entries){
+      const file=join(path,entry.name),name=label+"/"+entry.name;
+      if(entry.isDirectory())await directory(file,name);
+      else if(entry.isSymbolicLink())hash.update(JSON.stringify([name,"link",await readlink(file)])+"\n");
+      else if(entry.isFile())hash.update(JSON.stringify([name,await fileSha256(file)])+"\n");
+    }
+  }
+  await directory(dist,"dist");
+  const root=dirname(dist);
+  if(existsSync(join(root,"skills")))await directory(join(root,"skills"),"skills");
+  if(existsSync(join(root,"package.json")))hash.update(JSON.stringify(["package.json",await fileSha256(join(root,"package.json"))])+"\n");
+  return hash.digest("hex");
 }
 
 /** GNU tar on Windows chokes on `C:\...` drive paths; forward slashes work. */
@@ -249,9 +277,13 @@ export async function resolveIncomingAgentDistSha(ctx: InstallContext): Promise<
       try {
         // cwd-relative archive path keeps tar working on drive-letter
         // platforms; the payload layout is identical on Linux.
+        const listed=await runCommand("tar",["-tzf",basename(archive)],{cwd:dirname(archive),timeoutMs:120_000,maxBytes:512*1024});
+        if(listed.exit_code!==0)throw new Error("无法读取发行包目录。");
+        const names=listed.stdout.split(/\r?\n/);
+        const entries=["package/dist",...(["package/skills","package/package.json"].filter(entry=>names.some(name=>name===entry||name.startsWith(entry+"/"))))];
         const extracted = await runCommand(
           "tar",
-          ["-xzf", basename(archive), "-C", pathForTar(temporary), ...INCOMING_DIST_ENTRIES],
+          ["-xzf", basename(archive), "-C", pathForTar(temporary), ...entries],
           { cwd: dirname(archive), timeoutMs: 120_000, maxBytes: 512 * 1024 },
         );
         if (extracted.exit_code !== 0 || !INCOMING_DIST_ENTRIES.every(entry => existsSync(join(temporary, entry)))) {
@@ -349,7 +381,11 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       await mkdir(temporary, { recursive: true });
       try {
         let archive: string;
-        if (ctx.sourceKind === "bundle") {
+        const preparedArchive=process.env.BITTUNE_BOOTSTRAP_NODE_ARCHIVE?.trim();
+        if(preparedArchive){
+          archive=resolve(preparedArchive);
+          if(await fileSha256(archive)!==NODE_SHA256)throw new Error("引导暂存的Node.js归档SHA-256不匹配，未替换原运行时。");
+        } else if (ctx.sourceKind === "bundle") {
           archive = join(resolve(ctx.payloadPath), `node-${NODE_VERSION}-${NODE_PLATFORM_DIR}.tar.xz`);
           if (!existsSync(archive)) throw new Error(`离线包缺少 ${basename(archive)}。`);
           const digest = await fileSha256(archive);
@@ -411,10 +447,10 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       if (provided && agentPayloadComplete(provided)) {
         await mkdir(join(ctx.installRoot, "backups"), { recursive: true });
         await replaceDirectory(provided, agentRoot(ctx), () => backupPath(ctx, "agent"));
-        const launcherPath = "/usr/local/bin/bittune";
+        const launcherPath = installationLauncherPath();
         await mkdir(dirname(launcherPath), { recursive: true }).catch(() => undefined);
         await writeFile(launcherPath, launcherScript(ctx), { mode: 0o755 });
-        await writeInstallMarker(ctx, { distSha: await resolveIncomingAgentDistSha(ctx), coreWheelSha: await resolveCoreWheelSha(ctx) });
+        await writeInstallMarker(ctx, { distSha: await resolveIncomingAgentDistSha(ctx) });
         return `Bittune ${VERSION} 已就绪（采用引导暂存目录），入口 ${launcherPath}。`;
       }
       const stage = join(ctx.installRoot, `.agent-install-${uniqueStamp()}`);
@@ -431,10 +467,10 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
         }
         await mkdir(join(ctx.installRoot, "backups"), { recursive: true });
         await replaceDirectory(stage, agentRoot(ctx), () => backupPath(ctx, "agent"));
-        const launcherPath = "/usr/local/bin/bittune";
+        const launcherPath = installationLauncherPath();
         await mkdir(dirname(launcherPath), { recursive: true }).catch(() => undefined);
         await writeFile(launcherPath, launcherScript(ctx), { mode: 0o755 });
-        await writeInstallMarker(ctx, { distSha: await resolveIncomingAgentDistSha(ctx), coreWheelSha: await resolveCoreWheelSha(ctx) });
+        await writeInstallMarker(ctx, { distSha: await resolveIncomingAgentDistSha(ctx) });
         return `Bittune ${VERSION} 已就绪，入口 ${launcherPath}。`;
       } catch (error) {
         await rm(stage, { recursive: true, force: true });
@@ -509,7 +545,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       if (!existsSync(python)) return "pending";
       const check = await sh(python, ["-m", "bittune_core", "--version"], ctx.appendLog, 20_000).catch(() => null);
       if (!check || check.exit_code !== 0) return "pending";
-      const versionMatches = check.stdout.includes(coreWheelVersion(findCoreWheel(ctx)));
+      const versionMatches = check.stdout.trim() === `bittune-core ${coreWheelVersion(findCoreWheel(ctx))}`;
       const marker = await readInstallMarker(agentRoot(ctx));
       return coreMarkerSatisfied(marker, await resolveCoreWheelSha(ctx), versionMatches) ? "satisfied" : "pending";
     },
@@ -527,7 +563,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       const python = join(pyRoot(ctx), "bin", "python");
       const check = await sh(python, ["-m", "bittune_core", "--version"], ctx.appendLog, 20_000);
       const expected = coreWheelVersion(findCoreWheel(ctx));
-      if (check.exit_code !== 0 || !check.stdout.includes(expected)) {
+      if (check.exit_code !== 0 || check.stdout.trim() !== `bittune-core ${expected}`) {
         throw new Error(`Python Core 自检失败：期望 ${expected}，得到 ${check.stdout.trim() || "无输出"}。`);
       }
       return check.stdout.trim();

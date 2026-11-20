@@ -1,13 +1,20 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { join, resolve } from "node:path";
-import { COMPONENTS, ComponentSkipped, type ComponentDefinition, type InstallContext } from "./components.ts";
+import { COMPONENTS, ComponentSkipped, installationLauncherPath, type ComponentDefinition, type InstallContext } from "./components.ts";
+import {createSoftwareSnapshot,restoreSoftwareSnapshot,listSoftwareSnapshots,readSoftwareSnapshot,markSoftwareSnapshot,lockInstallation} from "./snapshots.ts";
+import {TaskClient} from "../../workflows/task-client.ts";
+import {resolveBittunePaths} from "../../core/bittune-paths.ts";
+import {assertDataOutsideSoftware} from "./guard.ts";
 import { runChecks, renderCheckLines, type CheckResult } from "./checks.ts";
 import { runCommand } from "../../utils/command-runner.ts";
 
 export const INSTALL_ROOT = process.env.BITTUNE_INSTALL_ROOT?.trim() || "/opt/bittune";
 
 export interface InstallOptions {
+  softwareOnly?:boolean;
+  listBackups?: boolean;
+  rollbackId?: string;
   checkOnly?: boolean;
   json?: boolean;
   yes?: boolean;
@@ -33,6 +40,7 @@ interface ExecutedEntry {
 }
 
 export interface InstallReport {
+  software_only?:boolean;
   mode: "check-only" | "install";
   installRoot: string;
   /** Environment facts about this very invocation (arch, disk, target user). */
@@ -44,6 +52,8 @@ export interface InstallReport {
   verification: CheckResult[];
   warnings: string[];
   failure?: InstallFailure;
+  backup_id?: string;
+  recovery?: {status:string;snapshot_id:string};
 }
 
 export interface InstallFailure {
@@ -148,18 +158,15 @@ export function formatInstallFailure(report: InstallReport): string {
   ].join("\n");
 }
 
-function emit(lines: readonly string[]): void {
-  for (const line of lines) console.log(line);
-}
-
 function renderEnvironment(rows: readonly CheckResult[]): string[] {
   return ["[环境]", ...renderCheckLines(rows)];
 }
 
-function confirmPlan(): Promise<boolean> {
-  if (!process.stdout.isTTY) return Promise.resolve(false);
+function confirmPlan(jsonMode = false): Promise<boolean> {
+  const output = jsonMode ? process.stderr : process.stdout;
+  if (!output.isTTY) return Promise.resolve(false);
   return new Promise((resolveAnswer) => {
-    const iface = createInterface({ input: process.stdin, output: process.stdout });
+    const iface = createInterface({ input: process.stdin, output });
     iface.question("按以上计划执行安装？[y/N] ", (value) => {
       iface.close();
       resolveAnswer(value.trim().toLowerCase() === "y" || value.trim().toLowerCase() === "yes");
@@ -179,10 +186,54 @@ function tally(entries: readonly ExecutedEntry[]): { satisfied: number; installe
   return counts;
 }
 
+async function quiesceCurrentWorkspace(){
+  await assertDataOutsideSoftware(INSTALL_ROOT,Object.values(resolveBittunePaths()));
+  let client:TaskClient|undefined;
+  try{
+    client=await TaskClient.connect(false,false);
+    const status=await client.request("engine_status",{});
+    if(status.active||status.inflight)throw new Error("当前工作区仍有任务或请求，软件尚未变更；请等待任务结束再安装或回退。");
+    await client.request("engine_shutdown",{});
+  }catch(error){if(!["ENOENT","ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code || ""))throw error;}
+  finally{client?.close();}
+  const core=resolveBittunePaths().core;
+  if(existsSync(join(core,"core.lock"))){
+    // Probe the same OS flock as CoreLease without depending on a healthy old Core install.
+    const result=await runCommand("python3",["-c","import fcntl,sys;f=open(sys.argv[1],'rb');fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)",join(core,"core.lock")],{timeoutMs:15000});
+    if(result.exit_code!==0)throw new Error("当前工作区的Core仍在使用或无法确认空闲，软件尚未变更；请结束原会话后重试。");
+  }
+}
+async function runRollbackCommand(options:InstallOptions){
+  const launcher=installationLauncherPath();
+  if(options.listBackups){
+    const backups=await listSoftwareSnapshots(INSTALL_ROOT);
+    console.log(options.json?JSON.stringify({install_root:INSTALL_ROOT,backups}):backups.map(s=>`${s.id}  ${s.status}  ${"created_at" in s?s.created_at:""}`).join("\n") || "当前没有可用的软件备份。");
+    return 0;
+  }
+  const id=options.rollbackId!,snapshot=await readSoftwareSnapshot(INSTALL_ROOT,id,launcher);
+  if(options.checkOnly){console.log(JSON.stringify({mode:"rollback-preview",snapshot_id:id,created_at:snapshot.created_at,components:snapshot.components,data_directories_changed:false,hardware_checks:false}));return 0;}
+  if(process.getuid?.()!==0)fail("系统软件回退需要sudo；可用--check-only只读预览。");
+  if(!options.json)console.log(`回退软件备份 ${id}；恢复Agent、Python环境、Node和CLI入口。账号、任务/报告、模型和Docker数据不回退。`);
+  if(!options.yes&&!await confirmPlan(Boolean(options.json)))return 0;
+  const release=await lockInstallation(INSTALL_ROOT);
+  try{await quiesceCurrentWorkspace();const result=await restoreSoftwareSnapshot(INSTALL_ROOT,id,launcher,name=>{if(!options.json)console.log(`正在恢复软件组件：${name}`);});console.log(options.json?JSON.stringify(result):`软件已恢复，备份编号：${id}。请按原部署方式重新启动应用。`);return 0;}
+  finally{await release();}
+}
+
 export async function runInstallCommand(options: InstallOptions): Promise<number> {
   const checkOnly = Boolean(options.checkOnly);
   const jsonMode = Boolean(options.json);
+  const emit = (lines: readonly string[]) => { for (const line of lines) (jsonMode ? console.error : console.log)(line); };
+  let release:(()=>Promise<void>)|undefined,snapshotId:string|undefined,finished=false,recoveryAttempted=false;
+  let report:InstallReport|undefined;
+  async function recover(){
+    if(!snapshotId||finished||recoveryAttempted)return;
+    recoveryAttempted=true;
+    try{await restoreSoftwareSnapshot(INSTALL_ROOT,snapshotId,installationLauncherPath());if(report)report.recovery={status:"restored",snapshot_id:snapshotId};console.error(`安装未完成，已恢复整套原软件；备份编号：${snapshotId}`);}
+    catch(error){if(report)report.recovery={status:"failed",snapshot_id:snapshotId};console.error(`自动恢复未完成，请保留备份 ${snapshotId}：${error instanceof Error?error.message:String(error)}`);}
+  }
   try {
+    if(options.listBackups||options.rollbackId)return await runRollbackCommand(options);
     let sourceKind: "network" | "bundle" | undefined;
     let payloadPath: string | undefined;
     if (!checkOnly) {
@@ -193,7 +244,7 @@ export async function runInstallCommand(options: InstallOptions): Promise<number
 
     const targetUser = options.user || "root";
 
-    mkdirSync(INSTALL_ROOT, { recursive: true });
+    if(!checkOnly)mkdirSync(INSTALL_ROOT, { recursive: true });
     const logPath = join(INSTALL_ROOT, "install.log");
     let appendLog: (chunk: string) => void = () => undefined;
     if (!checkOnly) {
@@ -207,7 +258,7 @@ export async function runInstallCommand(options: InstallOptions): Promise<number
     const invalidEnv = environment.find((row) => row.state === "unavailable");
     if (!checkOnly && invalidEnv) fail(invalidEnv.detail);
 
-    const preflight = await runChecks();
+    const preflight = await runChecks({softwareOnly:options.softwareOnly});
     const activeComponents = sourceKind ? applicableComponents(sourceKind) : [];
     const installContext: InstallContext = {
       installRoot: INSTALL_ROOT,
@@ -226,7 +277,8 @@ export async function runInstallCommand(options: InstallOptions): Promise<number
       plan.push({ id: component.id, label: component.label, required: component.required, version: description.version, source: description.source });
     }
 
-    const report: InstallReport = {
+    report = {
+      software_only:!!options.softwareOnly,
       mode: checkOnly ? "check-only" : "install",
       installRoot: INSTALL_ROOT,
       environment,
@@ -249,13 +301,14 @@ export async function runInstallCommand(options: InstallOptions): Promise<number
     emit(["", "[阶段 2/5] 安装计划"]);
     emit(plan.map((entry, index) => `[${index + 1}/${plan.length}] ${entry.label} —— ${entry.version}（来源：${entry.source}）${entry.required ? "" : " [可选]"}`));
 
-    if (!options.yes && !(await confirmPlan())) {
+    if (!options.yes && !(await confirmPlan(jsonMode))) {
       emit(["已取消：未做任何修改。非交互或自动安装请追加 --yes。"]);
       finishJson(jsonMode, report);
       return 0;
     }
 
     emit(["", "[阶段 3/5] 执行安装"]);
+    release=await lockInstallation(INSTALL_ROOT);
     for (let index = 0; index < activeComponents.length; index += 1) {
       const component = activeComponents[index]!;
       const tag = `[${index + 1}/${activeComponents.length}]`;
@@ -265,13 +318,16 @@ export async function runInstallCommand(options: InstallOptions): Promise<number
           entry = { id: component.id, label: component.label, status: "satisfied", summary: "已满足，跳过" };
           emit([`${tag} ${component.label} …… 跳过（已满足）`]);
         } else {
+          if(!snapshotId){await quiesceCurrentWorkspace();const snapshot=await createSoftwareSnapshot(INSTALL_ROOT,installationLauncherPath());snapshotId=snapshot.id;report.backup_id=snapshotId;emit([`原软件备份：${snapshotId}`]);}
           const summary = await component.install(installContext);
+          await component.verify(installContext);
           entry = { id: component.id, label: component.label, status: "installed", summary };
           emit([`${tag} ${component.label} …… 完成（${summary}）`]);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (error instanceof ComponentSkipped && !component.required) {
+          report.executed.push({id:component.id,label:component.label,status:"skipped",summary:message});
           report.warnings.push(`${component.label}：${message}`);
           emit([`${tag} ${component.label} …… 跳过（可选：${message}）`]);
           continue;
@@ -286,6 +342,7 @@ export async function runInstallCommand(options: InstallOptions): Promise<number
           logPath,
           retryCommand: retryCommand(installContext, options),
         };
+        await recover();
         emit(["", "[阶段终止]", "", formatInstallFailure(report)]);
         finishJson(jsonMode, report);
         return 1;
@@ -298,10 +355,14 @@ export async function runInstallCommand(options: InstallOptions): Promise<number
     }
 
     emit(["", "[阶段 4/5] 装后自检（前置项复查）"]);
-    report.verification = await runChecks();
+    // Optional tooling may change Python dependencies after Core was installed.
+    for(const component of activeComponents.filter(c=>c.required))await component.verify(installContext);
+    report.verification = await runChecks({softwareOnly:options.softwareOnly});
     emit(renderCheckLines(report.verification));
 
     const counts = tally(report.executed);
+    if(snapshotId)await markSoftwareSnapshot(INSTALL_ROOT,snapshotId,"installed");
+    finished=true;
     emit([
       "",
       "[阶段 5/5] 完成",
@@ -317,7 +378,11 @@ export async function runInstallCommand(options: InstallOptions): Promise<number
     finishJson(jsonMode, report);
     return 0;
   } catch (error) {
+    await recover();
     console.error(error instanceof Error ? error.message : String(error));
+    if(report)finishJson(jsonMode,report);
     return 1;
+  } finally {
+    await release?.();
   }
 }

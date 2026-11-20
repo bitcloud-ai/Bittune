@@ -125,11 +125,14 @@ def _compare_suite_points(store: CoreStore, run: ManagedRun, params: dict[str, A
         return run.success(branch["summary"], {"comparison": conclusion})
     objective = params.get("objective") if isinstance(params.get("objective"), str) and params["objective"] else "goodput_req_per_s"
     deltas = _compute_deltas(_as_benchmark_view(rows[0]), [_as_benchmark_view(row) for row in rows[1:]], objective)
+    benchmark_ids = [row.get("benchmark_result_id") for row in rows]
+    conclusion["baseline_benchmark_result_id"] = benchmark_ids[0]
+    conclusion["compared_benchmark_result_ids"] = benchmark_ids
     conclusion["objective"] = deltas["objective"]
     conclusion["deltas"] = deltas["deltas"]
     conclusion["summary"] = deltas["summary"]
     data = {"comparison": conclusion}
-    data.update(_record_experiment(store, run, params, conclusion, [row.get("benchmark_result_id") for row in rows]))
+    data.update(_record_experiment(store, run, params, conclusion, benchmark_ids))
     return run.success(deltas["summary"], data)
 
 

@@ -25,6 +25,7 @@ from bittune_core.inspect import inspect_environment, inspect_service, gpu_activ
 from bittune_core.plans import plan_deployment
 from bittune_core.protocol import Channel, Server
 from bittune_core.correctness import correctness_pack_info
+from bittune_core.cost_projection import cost_estimates
 from bittune_core.reports import write_report
 from bittune_core.services import deploy_service
 from bittune_core.store import CoreStore
@@ -84,7 +85,7 @@ def build_server(*, read_only: bool = False) -> Server:
         if not meta:
             raise ContractError("not_found", "制品不存在。")
         if meta["size_bytes"] > 16 * 1024 * 1024:
-            raise ContractError("payload_too_large", "单次读取上限16MiB；请使用本机原始制品。")
+            raise ContractError("payload_too_large", "Web下载上限16MiB；请使用本机原始制品。")
         return {**meta, "data_base64": base64.b64encode(store.read_artifact_bytes(artifact_id)).decode("ascii")}
 
     def scope_file_info(params, context):
@@ -102,6 +103,7 @@ def build_server(*, read_only: bool = False) -> Server:
             "scope_file_info": scope_file_info,
             "gpu_activity": wrap(gpu_activity),
             "correctness_pack_info": wrap(correctness_pack_info),
+            "cost_estimates": wrap(cost_estimates),
             "check_task_scope": check_scope,
             "inspect_records": wrap(inspect_records),
             "ingest_evidence": wrap(ingest_evidence),
@@ -116,7 +118,7 @@ def build_server(*, read_only: bool = False) -> Server:
             "write_report": wrap(write_report),
         }
     if read_only:
-        handlers = {name: handler for name, handler in handlers.items() if name in ("inspect_records", "artifact_content", "correctness_pack_info")}
+        handlers = {name: handler for name, handler in handlers.items() if name in ("inspect_records", "artifact_content", "correctness_pack_info", "cost_estimates")}
     return Server(channel, handlers)
 
 

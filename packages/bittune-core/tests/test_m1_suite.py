@@ -73,7 +73,10 @@ class M1SuiteTests(unittest.TestCase):
         self.assertEqual(stored,experiment)
         self.assertEqual(stored['suite_points'],points)
         self.assertEqual(stored['comparison_method'],'suite-points-v1')
-        self.assertEqual(stored['compared_benchmark_result_ids'],[s['rows'][0]['benchmark_result_id'] for s in (first,second)])
+        ids=[s['rows'][0]['benchmark_result_id'] for s in (first,second)]
+        self.assertEqual(stored['compared_benchmark_result_ids'],ids)
+        self.assertEqual(data['comparison']['compared_benchmark_result_ids'],ids)
+        self.assertEqual(data['comparison']['baseline_benchmark_result_id'],ids[0])
     def test_budget_does_not_start_extra_points(self):
         self.document['registry']['budget']['max_requests']=100
         rows=self.run_suite()['rows']

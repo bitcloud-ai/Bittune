@@ -189,13 +189,14 @@ def validate_plan(store: CoreStore, plan: dict[str, Any], run: ManagedRun, cance
 
     image = resolve_image(runtime_spec, cancellation)
     if image is None:
+        reference = image_reference(runtime_spec)
         check(
             "image_available",
             False,
-            f"本地没有镜像 {runtime_spec['image_repository']}@{runtime_spec['image_digest']}。",
+            f"本地没有镜像 {reference}。",
             {
                 "code": "image_missing",
-                "message": f"本地没有镜像 {runtime_spec['image_repository']}@{runtime_spec['image_digest']}。",
+                "message": f"本地没有镜像 {reference}。",
                 "remediation": "Core 不隐式拉取镜像；用 Bash 执行 docker pull（经 Runtime Policy）后重新 validate。",
             },
         )
@@ -224,7 +225,7 @@ def validate_plan(store: CoreStore, plan: dict[str, Any], run: ManagedRun, cance
         else:
             check("gpu_topology", True, f"GPU 并行规模在观测拓扑内（{workers} ≤ {gpu_count}）。")
 
-    if not _repository_allowed(runtime_spec["image_repository"], runtime_spec["image_digest"]):
+    if not _repository_allowed(runtime_spec["image_repository"], runtime_spec.get("image_digest")):
         check(
             "image_policy",
             False,
@@ -283,26 +284,28 @@ def _normalize_model_ref(value: Any, cancellation: Any = None) -> dict[str, Any]
 
 def _normalize_runtime_spec(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
-        raise ContractError("invalid_input", "runtime_spec 必须是带 schema_version 的对象。", remediation="runtime_spec: {schema_version: 1, runtime_kind, image_repository, image_digest}。")
+        raise ContractError("invalid_input", "runtime_spec 必须是带 schema_version 的对象。", remediation="runtime_spec: {schema_version: 1, runtime_kind, image_repository, image_digest 或 image_id}。")
     if value.get("schema_version") != 1:
         raise ContractError("invalid_input", "runtime_spec.schema_version 必须为 1。", {})
     runtime_kind = value.get("runtime_kind")
     require_adapter(runtime_kind)
     repository = value.get("image_repository")
-    digest = value.get("image_digest")
+    pins = [field for field in ("image_digest", "image_id") if field in value]
     if not isinstance(repository, str) or not _REPOSITORY.match(repository):
         raise ContractError("invalid_input", "runtime_spec.image_repository 格式不合法。", {})
-    if not isinstance(digest, str) or not _DIGEST.match(digest):
-        raise ContractError("invalid_input", "runtime_spec.image_digest 必须是 sha256:<64 hex>。", {})
-    if digest == "sha256:" + "0" * 64:
-        raise ContractError("invalid_input", "runtime_spec.image_digest 不能是全零占位摘要；先查得真实镜像 digest。")
+    if len(pins) != 1:
+        raise ContractError("invalid_input", "runtime_spec 需要且仅能指定 image_digest 或 image_id。")
+    pin = pins[0]
+    digest = value[pin]
+    if not isinstance(digest, str) or not _DIGEST.fullmatch(digest) or digest == "sha256:" + "0" * 64:
+        raise ContractError("invalid_input", f"runtime_spec.{pin} 必须是实际的 sha256:<64 hex>。")
     # Optional runtime_major (phase 2): experiences export the runtime kind +
     # major version. Deployment semantics are unchanged when omitted; only
     # the experience export refuses to proceed without it.
     runtime_major = value.get("runtime_major")
     if runtime_major is not None and (not isinstance(runtime_major, str) or not _RUNTIME_MAJOR.match(runtime_major)):
         raise ContractError("invalid_input", "runtime_spec.runtime_major 必须是纯数字主版本。", {})
-    normalized = {"schema_version": 1, "runtime_kind": runtime_kind, "image_repository": repository, "image_digest": digest}
+    normalized = {"schema_version": 1, "runtime_kind": runtime_kind, "image_repository": repository, pin: digest}
     if runtime_major is not None:
         normalized["runtime_major"] = runtime_major
     return normalized
@@ -377,9 +380,25 @@ def model_path_in_container(mount: dict[str, str]) -> str:
     return f"/root/.cache/huggingface/{relative.as_posix()}"
 
 
+def image_reference(runtime_spec: dict[str, Any]) -> str:
+    if "image_id" in runtime_spec:
+        return runtime_spec["image_id"]
+    return f"{runtime_spec['image_repository']}@{runtime_spec['image_digest']}"
+
+
 def resolve_image(runtime_spec: dict[str, Any], cancellation: Any) -> dict[str, Any] | None:
-    reference = f"{runtime_spec['image_repository']}@{runtime_spec['image_digest']}"
+    reference = image_reference(runtime_spec)
     direct = run_command(["docker", "image", "inspect", reference, "--format", "{{json .}}"], timeout_seconds=20, cancellation=cancellation)
+    if "image_id" in runtime_spec:
+        image = _safe_json(direct["stdout"]) if direct["exit_code"] == 0 else None
+        if not isinstance(image, dict) or image.get("Id") != reference:
+            return None
+        repository = runtime_spec["image_repository"]
+        names = {repository, f"docker.io/{repository}", f"index.docker.io/{repository}"}
+        tags = image.get("RepoTags") or []
+        if not any(tag.rsplit(":", 1)[0] in names for tag in tags):
+            return None
+        return _image_brief(image, reference, "local_image_id")
     if direct["exit_code"] == 0:
         image = _safe_json(direct["stdout"])
         if isinstance(image, dict) and image.get("Id") and _image_digest_matches(image, runtime_spec["image_repository"], runtime_spec["image_digest"]):
@@ -436,7 +455,7 @@ def runtime_policy_path() -> str:
     return str(Path.home() / ".bittune" / "runtime-policy.json")
 
 
-def _repository_allowed(repository: str, digest: str) -> bool:
+def _repository_allowed(repository: str, digest: str | None) -> bool:
     path = Path(runtime_policy_path())
     try:
         policy = _safe_json(path.read_text(encoding="utf-8"))
@@ -448,7 +467,7 @@ def _repository_allowed(repository: str, digest: str) -> bool:
     if not isinstance(allowed, list) or repository not in allowed:
         return False
     for image in policy.get("runtimeImages") or []:
-        if isinstance(image, dict) and image.get("repository") == repository and image.get("digest") != digest:
+        if isinstance(image, dict) and image.get("repository") == repository and (digest is None or image.get("digest") != digest):
             return False
     return True
 

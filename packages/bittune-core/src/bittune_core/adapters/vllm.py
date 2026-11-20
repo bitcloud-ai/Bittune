@@ -7,6 +7,7 @@ be backed by its mapped CLI flag - the adapter never guesses image behavior.
 """
 
 import math
+import re
 from typing import Any
 
 from bittune_core.contracts import ContractError, canonical_json, sha256_bytes
@@ -45,6 +46,9 @@ _FLAG_FOR_PARAMETER = {
     "enable_prefix_caching": "--enable-prefix-caching",
 }
 
+_TEXT_ONLY_FLAG = "--language-model-only"
+_PARSER_FLAGS = {"tool_call_parser": "--tool-call-parser", "reasoning_parser": "--reasoning-parser"}
+
 REQUIRED_FLAGS = ["--model", "--served-model-name", "--host", "--port"]
 
 
@@ -58,6 +62,17 @@ def materialize(value: Any) -> dict[str, Any]:
         invalid("serving_spec", "must be an object")
     result = {item["name"]: item["default"] for item in PARAMETERS}
     for name, raw in value.items():
+        if name == "language_model_only":
+            if not isinstance(raw, bool):
+                invalid(name, "must be boolean")
+            if raw:
+                result[name] = True
+            continue
+        if name in _PARSER_FLAGS:
+            if not isinstance(raw, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", raw):
+                invalid(name, "must be a built-in parser name")
+            result[name] = raw
+            continue
         descriptor = _DESCRIPTORS.get(name)
         if descriptor is None:
             raise ContractError(
@@ -120,6 +135,8 @@ def compile_engine_args(configuration: dict[str, Any], supported_flags: list[str
     for name, flag in _FLAG_FOR_PARAMETER.items():
         if name == "enable_prefix_caching" and config[name] is False:
             flag = "--no-enable-prefix-caching"
+            if flags is not None and flag not in flags and "--disable-prefix-caching" in flags:
+                flag = "--disable-prefix-caching"
         descriptor = _DESCRIPTORS[name]
         append_ok = flags is None or flag in flags
         if not append_ok and config[name] != descriptor["default"]:
@@ -136,7 +153,17 @@ def compile_engine_args(configuration: dict[str, Any], supported_flags: list[str
         else:
             args.append(flag)
             args.append(str(config[name]))
-    return args
+    optional_args = [_TEXT_ONLY_FLAG] if config.get("language_model_only") else []
+    if "tool_call_parser" in config:
+        optional_args.append("--enable-auto-tool-choice")
+    for name, flag in _PARSER_FLAGS.items():
+        if name in config:
+            optional_args.extend((flag, config[name]))
+    if flags is not None:
+        for flag in optional_args:
+            if flag.startswith("--") and flag not in flags:
+                raise ContractError("runtime_cli_incompatible", f"The selected vLLM image does not support {flag}.", {"flag": flag})
+    return args + optional_args
 
 
 def compile_docker_gpu_args(configuration: dict[str, Any]) -> list[str]:

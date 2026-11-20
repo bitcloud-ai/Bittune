@@ -138,9 +138,9 @@ export function checkCatalog(): readonly CheckDefinition[] {
   return CHECKS;
 }
 
-export async function runChecks(): Promise<CheckResult[]> {
+export async function runChecks(options:{softwareOnly?:boolean}={}): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
-  for (const check of CHECKS) results.push(await check.probe());
+  for (const check of CHECKS)if(!options.softwareOnly||check.scope!=="host")results.push(await check.probe());
   return results;
 }
 

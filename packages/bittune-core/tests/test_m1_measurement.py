@@ -84,4 +84,5 @@ class MeasurementTests(unittest.TestCase):
     def test_cache_false_requires_actual_negative_flag(self):
         s={'service_instance_id':'service-fixture','plan_id':'plan-fixture','config_hash':'sha256:'+'c'*64,'ownership':'managed','runtime_spec':{'runtime_kind':'vllm'},'serving_spec':{'enable_prefix_caching':False}}
         self.assertEqual(cache_context(s)['mode'],'uncontrolled')
-        self.assertEqual(cache_context({**s,'engine_args':['--no-enable-prefix-caching']})['mode'],'disabled')
+        for flag in ('--no-enable-prefix-caching', '--disable-prefix-caching'):
+            self.assertEqual(cache_context({**s, 'engine_args': [flag]})['mode'], 'disabled')
